@@ -18,7 +18,6 @@ import {
   layout,
   nextCommand,
   setAgentOrder,
-  home,
   exec,
   focused,
 } from "herdr";
@@ -845,10 +844,12 @@ export class Spaces {
     this.dragging = false;
   }
 
-  // A new space starts at its machine's home, never in the focused terminal's folder:
-  // from a worktree that would open a second space on it, and removing either deletes both.
+  // Here, + asks how (Add a project: open a folder, clone, or create). On another machine,
+  // whose folders that dialog can't browse, a new space starts at the machine's home, never in
+  // the focused terminal's folder: from a worktree that would open a second space on it.
   newSpace(m) {
-    const folder = m ? this.remoteHome[m] : home();
+    if (!m) return run("mod.open", { name: "new-project" });
+    const folder = this.remoteHome[m];
     run("space.new", { machine: m ?? "", ...(folder ? { folder } : {}) });
   }
 
