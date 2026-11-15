@@ -152,7 +152,12 @@ Project settings, Excalidraw (cmd-shift-e), Open in VS Code (cmd-g) and context 
   machine), **When to run** (Ask every time / Run by default / Skip by default) and **Wait for setup
   to complete before starting agent**; and Remove project.
 - **Files**: clicking a file opens it in its own tab (Markdown rendered with a Source toggle), reusing
-  the tab already showing it; right-click opens it in your apps. Git-ignored files and folders (and
+  the tab already showing it. Right-click a file or folder for **Add to <agent>** (puts it on the
+  clipboard as a file and pastes it into the space's focused agent, else its first, as if dragged
+  there), open in your apps, **Reveal in Finder** / **Show in File Explorer**, **Copy path**, and
+  **Move to Trash** / **Move to Recycle Bin** (recoverable; on another machine only Copy path).
+  Herdr mods can't drag onto a terminal, so Add to stands in for drag and drop; the items are in
+  `items.js`, checked by `node mods/files-open-with/check.mjs`. Git-ignored files and folders (and
   everything under an ignored folder) are greyed out; symlinks show a link icon after their name.
   Code is colored by the **Code colors** setting (Mod settings): Editor (default; a soft palette for
   light and dark), Terminal (the theme's ANSI colors) or Off. `.env`, `.env.*`, `*.env` and `.envrc`

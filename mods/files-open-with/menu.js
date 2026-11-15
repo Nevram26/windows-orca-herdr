@@ -1,10 +1,11 @@
 // The right-click popup. Opened by panel.js with
-// props { role: "menu", path (absolute), dir, on, items (indexes into ITEMS), overlay }.
+// props { role: "menu", path (absolute), dir, on, agent ({ terminal, name } or null),
+// items (indexes into ITEMS), overlay }.
 // ↑/↓ move, Enter runs, Esc closes.
 
 import { div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { props, closeOverlay, theme, exec, notify } from "herdr";
+import { props, closeOverlay, theme, exec, notify, run } from "herdr";
 import { ITEMS, argvOf } from "./items.js";
 
 // A plain class: main.js (the View) owns it and forwards init and render.
@@ -26,9 +27,17 @@ export default class Menu {
     const [cmd, ...args] = argvOf(it, p.path);
     // Not awaited by the menu: Quick Look runs until its window is closed.
     exec(cmd, args).then(
-      r => { if (r.code !== 0 && cmd !== "qlmanage") notify({ title: it.label, body: r.stderr.trim() || `Exited with ${r.code}`, level: "error" }); },
-      e => notify({ title: it.label, body: String(e), level: "error" }),
+      r => {
+        if (r.code !== 0 && cmd !== "qlmanage") return notify({ title: this.label(it), body: r.stderr.trim() || `Exited with ${r.code}`, level: "error" });
+        // The file is on the clipboard now: paste it into the agent as if dropped there.
+        if (it.agent) { run("pane.focus", { terminal: p.agent.terminal }); run("terminal.paste"); }
+      },
+      e => notify({ title: this.label(it), body: String(e), level: "error" }),
     );
+  }
+
+  label(it) {
+    return it.agent ? `Add to ${props()?.agent?.name ?? "agent"}` : it.label;
   }
 
   render(cx) {
@@ -50,7 +59,7 @@ export default class Menu {
         else return;
         cx.notify();
       })
-      .child(div().h(26).px(8).pt(4).text_size(11).text_color(t.dim).truncate().child(p?.path?.split("/").pop() || p?.path || ""))
+      .child(div().h(26).px(8).pt(4).text_size(11).text_color(t.dim).truncate().child(p?.path?.split(/[\\/]/).pop() || p?.path || ""))
       .children(list.map((it, i) =>
         h_flex()
           .id(`fow-${i}`)
@@ -65,6 +74,6 @@ export default class Menu {
           .hover(s => s.bg(t.hover))
           .on_click(() => this.choose(i))
           .child(svg(`mods/files-open-with/menu-${it.icon}.svg`).size(14).flex_none().text_color(t.muted))
-          .child(div().flex_1().truncate().child(it.label))));
+          .child(div().flex_1().truncate().child(this.label(it)))));
   }
 }
