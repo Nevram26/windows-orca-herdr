@@ -1,8 +1,10 @@
 // Sidebar nav: Orca-style links above Spaces that open Automations and Issues as popups.
 // The popup's size and look live in each mod's mod.json `overlay`; mod.open again closes it.
+// It also keeps the issues assigned to you fresh (assigned.js); Issues shows their count.
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { theme, run } from "herdr";
+import { theme, run, shared, setShared } from "herdr";
+import { EVERY, fetchAssigned, writeAssigned, readAssigned } from "./assigned.js";
 
 const LINKS = [
   ["automations", "Automations", "mods/sidebar-nav/automations.svg"],
@@ -11,21 +13,50 @@ const LINKS = [
 ];
 
 export default class SidebarNav extends View {
-  init() {
+  init(_props, cx) {
     this.width = Infinity;
+    this.want = shared("issues.assignedWant") ?? null;
+    cx.spawn(async (cx) => {
+      // The last list at once (from disk), then GitHub only when it's stale.
+      const saved = shared("issues.assigned")?.items ? null : await readAssigned();
+      if (saved) setShared("issues.assigned", saved);
+      this.refresh(cx, false);
+    });
+    cx.timer.every(60000, (cx) => this.refresh(cx, false));
   }
 
-  render() {
-    const t = theme(), collapsed = this.width < 160;
+  refresh(cx, force) {
+    const now = shared("issues.assigned") ?? {};
+    if (this.busy || (!force && Date.now() - (now.at ?? 0) < EVERY)) return;
+    this.busy = true;
+    setShared("issues.assigned", { ...now, loading: true });
+    cx.spawn(async () => {
+      try {
+        const items = await fetchAssigned(), at = Date.now();
+        setShared("issues.assigned", { at, items });
+        await writeAssigned(items, at);
+      } catch (e) {
+        // Keeps the last list; `at` moves on so a failure isn't retried every minute.
+        setShared("issues.assigned", { ...now, at: Date.now(), loading: false, error: String(e?.message ?? e) });
+      } finally { this.busy = false; }
+    });
+  }
+
+  render(cx) {
+    const want = shared("issues.assignedWant") ?? null;
+    if (want !== this.want) { this.want = want; cx.timer.after(0, (cx) => this.refresh(cx, true)); }
+    const t = theme(), collapsed = this.width < 160, count = shared("issues.assigned")?.items?.length;
     return v_flex().id("sidebar-nav").size_full().px(8).pt(4).gap(1).bg(t.chrome).text_size(13)
       .on_size_change((size, cx) => { if (size.width !== this.width) { this.width = size.width; cx.notify(); } })
       .children(LINKS.map(([mod, label, icon]) =>
         h_flex().id(`nav-${mod}`).h(30).flex_none().px(8).gap(10).items_center().rounded(7).cursor_pointer()
           .when(collapsed, (el) => el.justify_center().px(0))
           .text_color(t.muted).hover((s) => s.bg(t.hover).text_color(t.foreground))
-          .role("button").accessibility_label(label).tooltip(label)
+          .role("button").accessibility_label(label).tooltip(mod === "issues" && count ? `Issues · ${count} assigned to you` : label)
           .on_click(() => run("mod.open", { name: mod }))
           .child(svg(icon).size(16).flex_none())
-          .when(!collapsed, (el) => el.child(div().flex_1().min_w(0).truncate().child(label)))));
+          .when(!collapsed, (el) => el.child(div().flex_1().min_w(0).truncate().child(label)))
+          .when(!collapsed && mod === "issues" && count > 0, (el) => el.child(
+            div().flex_none().px(6).rounded(9).bg(t.raised).text_size(11).text_color(t.muted).child(String(count))))));
   }
 }

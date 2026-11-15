@@ -70,7 +70,8 @@ export default class Issues extends View {
 
     this.overlay = overlay;
     this.repos = sharedMap("folders", "repos"); this.logins = sharedMap("logins", "logins"); this.spaceRepos = sharedMap("spaces", "spaces");
-    this.tab = shared("issues.tab") ?? "issues"; this.query = { ...DEFAULT }; this.page = 0;
+    // Always opens on Assigned: the issues assigned to you in every repo.
+    this.tab = "assigned"; this.folded = new Set(); this.query = { ...DEFAULT }; this.page = 0;
     this.projects = new Projects(this);
     this.results = {}; this.loading = null; this.error = null;
     this.pickAt = shared("issues.pick")?.at; this.changedAt = shared("issues.changed")?.at;
@@ -146,6 +147,8 @@ export default class Issues extends View {
   // The list for the query: the disk cache at once, then GitHub only when it may have changed.
   // force (Refresh, the person's own edits) always fetches.
   load(cx, force = false) {
+    // Assigned is fetched by sidebar-nav (always loaded); a forced load asks it for a fresh list.
+    if (this.tab === "assigned") { if (force) setShared("issues.assignedWant", Date.now()); return; }
     if (!this.repo) return;
     if (this.tab === "projects") return this.projects.load(cx, force);
     const key = this.key(), held = this.results[key];
@@ -204,7 +207,7 @@ export default class Issues extends View {
       return this.load(cx);
     }
     if (p.gh) cx.spawn(async (cx) => {
-      const r = await exec("gh", p.gh, { on: this.repoOn }).catch((e) => ({ code: 1, stderr: String(e) }));
+      const r = await exec("gh", p.gh, { on: this.tab === "assigned" ? null : this.repoOn }).catch((e) => ({ code: 1, stderr: String(e) }));
       if (r.code !== 0) this.error = (r.stderr || r.stdout).trim();
       this.load(cx, true);
     });
@@ -308,11 +311,11 @@ export default class Issues extends View {
       .text_color(t.foreground).text_size(13).px(20).pt(14).pb(16).gap(12)
       .child(this.topBar(t))
       .child(this.tabsRow(t))
-      .child(!this.repo ? this.empty(t) : this.tab === "projects" ? this.projects.card(t, cx) : this.card(t, cx));
+      .child(this.tab === "assigned" ? this.assignedCard(t, cx) : !this.repo ? this.empty(t) : this.tab === "projects" ? this.projects.card(t, cx) : this.card(t, cx));
   }
 
   topBar(t) {
-    const where = ["GitHub", this.repoOn ?? "This Mac", this.repo].filter(Boolean).join(" · ");
+    const where = this.tab === "assigned" ? "GitHub · Assigned to you" : ["GitHub", this.repoOn ?? "This computer", this.repo].filter(Boolean).join(" · ");
     return h_flex().h(36).gap(10).items_center()
       .child(div().id("issues-close").size(32).flex().items_center().justify_center().rounded(8).cursor_pointer().text_color(t.muted)
         .hover((s) => s.bg(t.hover).text_color(t.foreground)).on_click(() => closeOverlay(this.overlay)).child(this.glyph("close", 18)))
@@ -323,17 +326,20 @@ export default class Issues extends View {
   tabsRow(t) {
     const known = [...new Map([...Object.entries(this.repos).map(([k, v]) => [v, JSON.parse(k)[1] ?? null]),
       ...Object.values(this.spaceRepos).map((s) => [s.repo, s.on ?? null])]).entries()].sort(([a], [b]) => a.localeCompare(b));
+    const assigned = this.tab === "assigned", count = shared("issues.assigned")?.items?.length;
     return h_flex().gap(8).items_center()
+      .child(this.chip("tab-assigned", count ? `Assigned ${count}` : "Assigned", assigned, t, (cx) => this.setTab("assigned", cx)))
       .child(this.chip("tab-issues", "Issues", this.tab === "issues", t, (cx) => this.setTab("issues", cx)))
       .child(this.chip("tab-prs", "PRs", this.tab === "prs", t, (cx) => this.setTab("prs", cx)))
       .child(this.chip("tab-projects", "Projects", this.tab === "projects", t, (cx) => this.setTab("projects", cx)))
-      .child(this.btn("repo-pick", t, [div().size(8).rounded(2).bg(t.muted), div().child(this.repo?.split("/")[1] ?? "Choose repository"), this.glyph("updown", 14, t.muted)],
+      // Assigned spans every repo: no repo to pick there.
+      .when(!assigned, (e) => e.child(this.btn("repo-pick", t, [div().size(8).rounded(2).bg(t.muted), div().child(this.repo?.split("/")[1] ?? "Choose repository"), this.glyph("updown", 14, t.muted)],
         () => {
           const at = this.anchor();
           openOverlay({ mod: "issues", kind: "popup", width: 420, height: 480, ...(at ? { at } : {}),
             props: { repoMenu: { current: this.repo, following: this.following, detected: this.detected ?? null, local: known } } });
-        }))
-      .when(Boolean(this.repo), (e) => e
+        })))
+      .when(Boolean(this.repo) && !assigned, (e) => e
         .child(this.btn("repo-github", t, this.glyph("external", 16), () => openUrl(`https://github.com/${this.repo}/${{ prs: "pulls", projects: "projects" }[this.tab] ?? "issues"}`), { square: true })));
   }
 
@@ -368,6 +374,40 @@ export default class Issues extends View {
       .when(pages > 1, (e) => e.child(this.pager(pages, t)));
   }
 
+  // Every open issue assigned to you, grouped by repo. The list is shared "issues.assigned",
+  // fetched and kept fresh by sidebar-nav; ↻ asks it for a new one.
+  assignedCard(t, cx) {
+    const a = shared("issues.assigned") ?? {}, items = a.items ?? [];
+    const repos = [...new Set(items.map((i) => i.repo))];
+    const ago = a.at ? updated(new Date(a.at).toISOString()) : null;
+    const rows = repos.flatMap((repo) => {
+      const mine = items.filter((i) => i.repo === repo), open = !this.folded.has(repo), [owner, name] = repo.split("/");
+      return [h_flex().id(`repo-${repo}`).h(44).flex_none().px(18).gap(10).items_center().border_b(1).border_color(t.border).bg(t.chrome)
+        .cursor_pointer().hover((s) => s.bg(t.hover))
+        .on_click((_e, cx) => { if (!this.folded.delete(repo)) this.folded.add(repo); cx.notify(); })
+        .child(this.glyph(open ? "chevron" : "right", 14, t.muted))
+        .child(div().font_semibold().child(name))
+        .child(div().text_size(12).text_color(t.dim).child(owner))
+        .child(div().flex_1())
+        .child(div().px(8).rounded(10).bg(t.raised).text_size(12).text_color(t.muted).child(String(mine.length)))
+        .child(this.btn(`repo-gh-${repo}`, t, this.glyph("external", 14),
+          () => openUrl(`https://github.com/${repo}/issues?q=is%3Aissue+is%3Aopen+assignee%3A%40me`), { square: true, h: 28 })),
+      ...(open ? mine.map((i) => this.row(i, t, cx, repo)) : [])];
+    });
+    return v_flex().flex_1().min_h(0).rounded(12).border_1().border_color(t.border).bg(t.chrome).overflow_hidden()
+      .child(h_flex().px(18).py(12).gap(10).items_center()
+        .child(div().text_size(13).text_color(t.muted).child(`${items.length} open issue${items.length === 1 ? "" : "s"} in ${repos.length} repo${repos.length === 1 ? "" : "s"}`))
+        .child(div().flex_1())
+        .when(Boolean(ago), (e) => e.child(div().text_size(12).text_color(t.dim).child(`Updated ${ago}`)))
+        .child(this.btn("refresh", t, a.loading ? svg("mods/workspace-chrome/spinner.svg").size(16).text_color(t.working).spin(900) : this.glyph("refresh", 16),
+          (cx) => this.load(cx, true), { square: true })))
+      .when(Boolean(a.error || this.error), (e) => e.child(div().px(18).pb(8).text_size(12).text_color(t.ansi1).child(this.error || a.error)))
+      .child(this.row(null, t, cx))
+      .child(v_flex().id("rows-assigned").flex_1().min_h(0).overflow_y_scrollbar().children(rows)
+        .when(!items.length, (e) => e.child(div().py(40).text_center().text_size(12).text_color(t.dim)
+          .child(a.loading || !a.at ? "Loading…" : "Nothing is assigned to you"))));
+  }
+
   searchBox(t, q, base) {
     return h_flex().id("search").flex_1().min_w(0).h(34).px(12).gap(10).items_center().rounded(8).border_1().border_color(t.border).bg(t.background)
       .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
@@ -378,7 +418,7 @@ export default class Issues extends View {
   }
 
   // One table row; null draws the column headings.
-  row(i, t, cx) {
+  row(i, t, cx, repo = this.repo) {
     const head = !i;
     const cell = (w, child) => h_flex().w(w).flex_none().items_center().child(child);
     const label = (s) => div().text_size(11).font_semibold().text_color(t.dim).child(s);
@@ -387,12 +427,12 @@ export default class Issues extends View {
       .child(cell(96, label("ID"))).child(div().flex_1().child(label("TITLE / CONTEXT")))
       .child(cell(120, label("ASSIGNEES"))).child(cell(120, label("STATUS"))).child(cell(130, label("UPDATED"))).child(cell(130, div()));
 
-    const s = this.status(i, t), space = this.spaceFor(i), repoName = this.repo.split("/")[1];
+    const s = this.status(i, t), space = this.spaceFor(i), repoName = repo.split("/")[1];
     const assignees = i.assignees ?? [];
     const stop = (e, cx) => { this.press = e; cx.stop_propagation(); };
     const kind = this.kind(), n = String(i.number);
     return r.id(`row-${i.number}`).min_h(72).py(10).bg(t.background).cursor_pointer().hover((st) => st.bg(t.hover))
-      .on_click(() => this.openIssue(i))
+      .on_click(() => this.openIssue(i, { repo }))
       .child(cell(96, h_flex().h(26).px(8).gap(6).items_center().rounded(6).border_1().border_color(t.border).text_size(12).text_color(t.muted)
         .child(this.glyph(s.glyph, 13, t.muted)).child(`#${i.number}`)))
       .child(v_flex().flex_1().min_w(0).gap(4)
@@ -408,8 +448,8 @@ export default class Issues extends View {
             const mine = assignees.some((a) => a.login === this.me);
             this.popup({ title: "Assignees", items: [
               ...assignees.map((a) => ({ label: a.login, check: true })),
-              mine ? { label: "Unassign me", pick: { gh: [kind, "edit", n, "-R", this.repo, "--remove-assignee", "@me"] } }
-                : { label: "Assign yourself", pick: { gh: [kind, "edit", n, "-R", this.repo, "--add-assignee", "@me"] } },
+              mine ? { label: "Unassign me", pick: { gh: [kind, "edit", n, "-R", repo, "--remove-assignee", "@me"] } }
+                : { label: "Assign yourself", pick: { gh: [kind, "edit", n, "-R", repo, "--add-assignee", "@me"] } },
             ] });
           })
           .when(!assignees.length, (e) => e.child(div().px(4).text_color(t.dim).child("–")))
@@ -420,25 +460,25 @@ export default class Issues extends View {
         .text_size(12).text_color(s.color).on_mouse_down("left", stop)
         .on_click((_e, cx) => {
           cx.stop_propagation();
-          const open = i.state === "OPEN", reopen = { label: "Reopen", pick: { gh: [kind, "reopen", n, "-R", this.repo] } };
+          const open = i.state === "OPEN", reopen = { label: "Reopen", pick: { gh: [kind, "reopen", n, "-R", repo] } };
           this.popup({ title: "Status", items: kind === "pr"
-            ? (open ? [{ label: "Close pull request", pick: { gh: ["pr", "close", n, "-R", this.repo] } }] : i.state === "CLOSED" ? [reopen] : [{ label: "Merged", check: true }])
+            ? (open ? [{ label: "Close pull request", pick: { gh: ["pr", "close", n, "-R", repo] } }] : i.state === "CLOSED" ? [reopen] : [{ label: "Merged", check: true }])
             : open ? [
-              { label: "Close as completed", hint: "Done, fixed, resolved", pick: { gh: ["issue", "close", n, "-R", this.repo, "--reason", "completed"] } },
-              { label: "Close as not planned", hint: "Won't fix, duplicate, stale", pick: { gh: ["issue", "close", n, "-R", this.repo, "--reason", "not planned"] } },
+              { label: "Close as completed", hint: "Done, fixed, resolved", pick: { gh: ["issue", "close", n, "-R", repo, "--reason", "completed"] } },
+              { label: "Close as not planned", hint: "Won't fix, duplicate, stale", pick: { gh: ["issue", "close", n, "-R", repo, "--reason", "not planned"] } },
             ] : [reopen] });
         })
         .child(this.glyph(s.glyph, 12, s.color)).child(s.label).child(this.glyph("chevron", 11, s.color))))
       .child(cell(130, div().text_size(12).text_color(t.muted).child(updated(i.updatedAt))))
       .child(cell(130, h_flex().gap(6).items_center().justify_end()
-        .child(this.btn(`start-${n}`, t, [div().font_medium().child(space ? "Open" : "Start"), this.glyph("arrow", 14)], (cx) => this.start(i, cx), { solid: Boolean(space), h: 30 }))
+        .child(this.btn(`start-${n}`, t, [div().font_medium().child(space ? "Open" : "Start"), this.glyph("arrow", 14)], (cx) => this.start(i, cx, { repo }), { solid: Boolean(space), h: 30 }))
         .child(div().id(`more-${n}`).size(28).flex().items_center().justify_center().rounded(6).text_color(t.muted)
           .hover((st) => st.bg(t.raised).text_color(t.foreground)).on_mouse_down("left", stop)
           .on_click((_e, cx) => {
             cx.stop_propagation();
             this.popup({ items: [
               { label: "Copy link", hint: i.url, copy: i.url },
-              { label: "Copy reference", hint: `${this.repo}#${n}`, copy: `${this.repo}#${n}` },
+              { label: "Copy reference", hint: `${repo}#${n}`, copy: `${repo}#${n}` },
               { label: "Copy number and title", hint: `#${n} ${i.title}`, copy: `#${n} ${i.title}` },
               { label: "Open on GitHub", open: i.url },
             ] }, 300);
