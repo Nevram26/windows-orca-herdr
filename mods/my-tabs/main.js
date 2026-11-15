@@ -1,6 +1,6 @@
 import { View, div, svg, image } from "gpui-kit";
 import { h_flex } from "gpui-base";
-import { spaces, panes, run, openOverlay, theme, window, shared, layout, settings, exec, focused, nextCommand, props } from "herdr";
+import { spaces, panes, run, openOverlay, theme, window, shared, layout, settings, exec, focused, nextCommand, props, keys } from "herdr";
 
 function find(node, id) {
   if (node?.id === id) return node;
@@ -55,6 +55,15 @@ function railToHidden(sidebar) {
   const width = shared("sidebar.width");
   run("layout.resize", { id: "sidebar", px: width >= 160 ? width : 268 });
   run("layout.hide", { id: "sidebar" });
+}
+
+// The drawing key as bound here (this layout's section first), not a hardcoded ⌘⇧E.
+function drawingTip() {
+  const mac = window()?.platform === "macos";
+  const names = { cmd: mac ? "⌘" : "Ctrl+", ctrl: mac ? "⌃" : "Ctrl+", shift: mac ? "⇧" : "Shift+", alt: mac ? "⌥" : "Alt+", option: mac ? "⌥" : "Alt+" };
+  const all = keys().filter((k) => k.action === "mod.open:excalidraw");
+  const b = all.find((k) => k.section === `layout:${shared("layout")}`) ?? all.find((k) => k.section === "global");
+  return b ? `Open a drawing (${b.keys.split("-").map((p) => names[p] ?? p.toUpperCase()).join("")})` : "Open a drawing";
 }
 
 export default class Tabs extends View {
@@ -168,7 +177,7 @@ export default class Tabs extends View {
       .when(enabled.includes("files"), el => el.child(panelButton("files", "Files", "mods/files/file.svg")))
       .when(enabled.includes("changes"), el => el.child(panelButton("changes", "Changes", "mods/changes/changes.svg")))
       .child(h_flex().id("excalidraw").h(26).px(8).gap(5).flex_none().items_center().rounded(6).text_size(12).text_color(t.muted)
-        .hover(s => s.bg(t.hover).text_color(t.foreground)).tooltip("Open a drawing (⌘⇧E)").on_mouse_down("left", stop)
+        .hover(s => s.bg(t.hover).text_color(t.foreground)).tooltip(drawingTip()).on_mouse_down("left", stop)
         .on_click(() => run("mod.open", { name: "excalidraw" }))
         .child(svg("mods/excalidraw/icons/freedraw.svg").size(14)).child("Excalidraw"));
   }

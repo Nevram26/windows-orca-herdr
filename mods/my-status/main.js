@@ -56,7 +56,8 @@ export default class WorkspaceStatus extends View {
     const status = merged ? "merged" : pr.state === "CLOSED" ? "closed" : pr.isDraft ? "draft" : "open";
     const issues = pr.closingIssuesReferences ?? [];
     const icon = (id, name, c, tip, url) => div().id(id).cursor_pointer().tooltip(tip)
-      .on_click(() => exec("open", [url]))
+      // Windows has no `open`: explorer.exe opens a link in the default browser.
+      .on_click(() => exec(window()?.platform === "windows" ? "explorer.exe" : "open", [url]))
       .child(svg(`mods/my-status/icons/${name}.svg`).size(14).text_color(c));
     return [
       issues.length > 0 && icon("issue", "issue", t.muted, `Linked: ${issues.map((i) => `#${i.number}`).join(", ")}`, issues[0].url),

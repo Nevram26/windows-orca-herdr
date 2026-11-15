@@ -25,12 +25,14 @@ const find = (node, id) => !node || typeof node !== "object" ? null : node.key =
 const state = {}, calls = [];
 let sidebar, windowBlock;
 let viewProps = {}, windowInfo = { platform: "macos" };
+let bindings = [];
 const env = {
   View: class {}, div: element, h_flex: element, svg: element, image: element,
   theme: () => new Proxy({}, { get: () => "#000" }), settings: () => ({ zoom: 1 }), window: () => windowInfo, props: () => viewProps,
   layout: () => ({ id: "root", children: [sidebar, ...(windowBlock ? [windowBlock] : [])] }), shared: (k) => state[k],
   run: (name, args) => calls.push([name, args == null ? args : JSON.parse(JSON.stringify(args))]), spaces: () => [], panes: () => [], focused: () => null,
   openOverlay() {}, exec() {}, nextCommand: () => new Promise(() => {}),
+  keys: () => bindings,
   localStorage: { getItem: () => null, setItem() {} },
 };
 const source = fs.readFileSync(path.join(__dirname, "main.js"), "utf8")
@@ -89,5 +91,16 @@ for (const [id, command] of [["minimize", "window.minimize"], ["maximize", "wind
   find(bar, id).handlers.on_click();
   assert.deepEqual(calls.pop(), [command, undefined]);
 }
+
+// The drawing button names the key bound here, this layout's section first.
+windowInfo = { platform: "windows" };
+state.layout = "orca";
+bindings = [{ section: "global", keys: "ctrl-e", action: "mod.open:excalidraw" }, { section: "layout:orca", keys: "alt-shift-e", action: "mod.open:excalidraw" }];
+assert.equal(context.drawingTip(), "Open a drawing (Alt+Shift+E)");
+windowInfo = { platform: "macos" };
+bindings = [{ section: "global", keys: "cmd-shift-e", action: "mod.open:excalidraw" }];
+assert.equal(context.drawingTip(), "Open a drawing (⌘⇧E)");
+bindings = [];
+assert.equal(context.drawingTip(), "Open a drawing");
 
 console.log("my-tabs: ok");
