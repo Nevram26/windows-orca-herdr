@@ -1,7 +1,6 @@
 // Open issues assigned to you on GitHub, in every repo. The nav is always loaded, so it
-// fetches them (one `gh search`), shares them as "issues.assigned" for the Issues popup's
-// Assigned tab, and writes data/issues/assigned.{md,json} for agents to read instead of
-// asking GitHub. The popup asks for a fresh list with shared "issues.assignedWant".
+// fetches them every 5 minutes (one `gh search`) and writes data/issues/assigned.{md,json}
+// for agents to read instead of asking GitHub.
 import * as fs from "fs/promises";
 import { exec, appHome } from "herdr";
 
@@ -30,7 +29,7 @@ export async function fetchAssigned() {
 export function markdown(items, at) {
   const out = [
     "# Issues assigned to me on GitHub (open)", "",
-    `Updated ${new Date(at).toISOString()} by Herdr, every 5 minutes (Issues → Assigned → ↻ refreshes now).`,
+    `Updated ${new Date(at).toISOString()} by Herdr, every 5 minutes.`,
     "Source: `gh search issues --assignee @me --state open`. Read this instead of asking GitHub for the list;",
     "use `gh issue view <number> -R <repo>` only for one issue's full text or comments.", "",
   ];
