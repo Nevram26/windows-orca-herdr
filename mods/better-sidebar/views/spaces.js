@@ -256,7 +256,8 @@ export class Spaces {
     if (!window().active) return;
     const every = duration(this.settings.git.retry_after, GIT_FALLBACK_MS);
     for (const key of used) {
-      const watched = this.git[key] || this.unsure.has(key);
+      // `key in this.git` includes "not a repo": a clone or `git init` there shows up too.
+      const watched = key in this.git || this.unsure.has(key);
       const shown = !this.folded.has(JSON.parse(key)[0]);
       if (watched && shown && now - (this.checked[key] ?? 0) > every) due.add(key);
     }
