@@ -1,8 +1,9 @@
 // Herdr's shipped Files panel (Herdr 0.1.11, Apache-2.0), plus a right-click menu
-// that opens the clicked file or folder in your own apps. See menu.js and items.js.
+// that opens, reveals, copies or deletes the clicked file or folder, or hands it to
+// this space's agent. See menu.js and items.js.
 import { div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, Editor, EditorState } from "gpui-base";
-import { spaces, panes, focused, exec, readTextFile, watchFolder, theme, settings, window, openOverlay } from "herdr";
+import { spaces, panes, agents, focused, exec, readTextFile, watchFolder, theme, settings, window, openOverlay } from "herdr";
 import { openFile } from "./tabs.js";
 import { syntaxColors, languageFor } from "./syntax.js";
 import { available, menuHeight } from "./items.js";
@@ -175,13 +176,20 @@ export default class Panel {
 
   // Right-click: which items apply (installed apps only), then the popup at the pointer.
   menu(path, dir, cx) {
-    if (window()?.platform !== "macos") return;
-    const target = { path, dir, on: this.on };
+    if (!this.on && window()?.platform === "windows") path = path.replace(/\//g, "\\");
+    const target = { path, dir, on: this.on, agent: this.agent() };
     cx.spawn(async () => {
       const items = await available(target);
       if (!items.length) return;
       openOverlay({ mod: "files-open-with", kind: "popup", width: 240, height: menuHeight(items.length), props: { role: "menu", ...target, items } });
     });
+  }
+
+  // The agent "Add to" pastes into: the focused one in this space, else its first.
+  agent() {
+    const { space } = location(), here = agents().filter(a => a.space === space);
+    const a = here.find(a => a.address === focused()?.terminal) ?? here[0];
+    return a ? { terminal: a.address, name: a.program?.name || a.app || "agent" } : null;
   }
 
   // Ignored by git, itself or through a folder above it.
