@@ -122,12 +122,16 @@ export default class NewProject extends View {
       try {
         const dir = await this.parent(), dest = `${dir}/${src.name}`;
         if (!(await this.free(dest))) throw new Error(`${tilde(dest)} already exists. Use Browse folder to open it.`);
-        const cmd = src.gh ? `gh repo clone ${sh(src.gh)} ${sh(src.name)}` : `git clone ${sh(src.url)} ${sh(src.name)}`;
+        // The space opens on the repo's own (empty) folder and clones into it, so its name, Files
+        // and Changes are the repo's. `;` keeps a shell there if the clone fails or is re-run.
+        const made = await unix("mkdir", [dest]).catch(() => null);
+        if (made?.code !== 0) throw new Error(`Can't create ${tilde(dest)}: ${(made?.stderr ?? "").trim()}`);
+        const cmd = src.gh ? `gh repo clone ${sh(src.gh)} .` : `git clone ${sh(src.url)} .`;
         this.close();
         // Windows: Git's sh, ending in PowerShell, Herdr's shell there.
         const posix = await shProgram();
         const shell = posix === "sh" ? 'exec "${SHELL:-zsh}" -l' : "exec powershell.exe -NoLogo";
-        run("space.new", { folder: dir, argv: [posix, "-c", `${cmd} && cd ${sh(src.name)} && ${shell}`] });
+        run("space.new", { folder: dest, argv: [posix, "-c", `${cmd}; ${shell}`] });
       } catch (e) { this.error = String(e?.message ?? e); this.busy = false; cx.notify(); }
     });
   }
