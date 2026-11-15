@@ -4,7 +4,7 @@
 import { View, div } from "gpui-kit";
 import { spaces, machines, shared, setShared, notify, openOverlay, closeOverlay, appHome, props, focused, nextCommand, exec, readTextFile, writeTextFile, window } from "herdr";
 import * as fs from "fs/promises";
-import { get, list, describe, idleShell, start, stop, commandLine, machineOf, missingCodexSession } from "./core.js";
+import { get, list, describe, idleShell, program, start, stop, commandLine, machineOf, missingCodexSession } from "./core.js";
 import { SleepDialog, ResumeDialog } from "./ui.js";
 import { loadSettings } from "./settings.js";
 
@@ -223,6 +223,21 @@ export default class Hibernate extends View {
     );
   }
 
+  // A sleeping terminal running a program again was started by hand: it's awake, and so is
+  // its space once only sub-agents (never resumed) are left. Only terminals in `byAddress`
+  // (this pass's reads) are judged. True when anything changed.
+  wokenByHand(byAddress) {
+    let changed = false;
+    for (const [id, s] of Object.entries(this.state.sleeping)) {
+      const still = s.items.filter((e) => e.parent || !program(byAddress.get(e.address)));
+      if (still.length === s.items.length) continue;
+      changed = true;
+      if (still.some((e) => !e.parent)) s.items = still;
+      else delete this.state.sleeping[id];
+    }
+    return changed;
+  }
+
   // Rolling snapshot, and loss detection: a recovered terminal keeps its address
   // but gets a new shell pid; a program exited on purpose leaves the same shell.
   async pass(_cx) {
@@ -232,6 +247,7 @@ export default class Hibernate extends View {
     if (pruned) await this.save(), this.publish();
     const live = (await Promise.all((await list()).filter((t) => local(t.address)).map((t) => get(t.address)))).filter(Boolean);
     const byAddress = new Map(live.map((g) => [g.address, g]));
+    if (this.wokenByHand(byAddress)) await this.save(), this.publish();
     const next = {};
     for (const g of live) {
       if (g.parent || !g.labels?.["herdr.space"]) continue;

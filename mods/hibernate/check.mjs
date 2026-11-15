@@ -158,6 +158,21 @@ await check("legacy Windows Codex snapshots remain saved with an actionable warn
     assert.match(notices.at(-1)?.body ?? "", /session.id|resume/i);
   }
 });
+await check("a program restarted by hand wakes its terminal, and the space once nothing is left asleep", async () => {
+  const h = new globalThis.Hibernate();
+  const top = (address) => ({ address, kind: "claude", argv: ["claude"], cwd: "C:\\repo" });
+  const running = (address) => ({ ...shell(address, 100), foreground: { pid: 200, name: "claude.exe", argv: ["claude"] } });
+  h.state = { sleeping: {
+    a: { name: "A", items: [top("t1"), top("t2"), top("vps/t9")] },
+    b: { name: "B", items: [top("t3"), { ...top("t4"), parent: "t3" }] },
+  } };
+  // t1 and t3 run Claude again; t2 is still an idle shell; vps/t9 is on a machine this pass didn't read.
+  const byAddress = new Map([["t1", running("t1")], ["t2", shell("t2", 300)], ["t3", running("t3")]]);
+  assert.equal(h.wokenByHand(byAddress), true);
+  assert.deepEqual(h.state.sleeping.a.items.map((e) => e.address), ["t2", "vps/t9"]);
+  assert.equal(h.state.sleeping.b, undefined, "only a sub-agent was left: the space is awake");
+  assert.equal(h.wokenByHand(byAddress), false, "nothing more changed");
+});
 await check("session ownership changes are rechecked before any stop keys", async () => {
   platform = "windows";
   rows = [child("codex.exe")];
