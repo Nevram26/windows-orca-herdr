@@ -7,7 +7,6 @@
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, TextareaState, Textarea } from "gpui-base";
 import { exec, hc, home, theme, terminals, spaces, run, notify, pickFolder, watchFolder, knownAgents, window } from "herdr";
-import { shProgram } from "./sh.js";
 
 const PRESETS = [
   ["Hourly", "0 * * * *"],
@@ -168,8 +167,12 @@ export default class Automations extends View {
 
   async put(dryRun) {
     const f = this.form, args = ["put", ...(f.original ? ["--original", f.original] : []), ...(dryRun ? ["--dry-run"] : [])];
-    // exec has no stdin: hand the JSON over through the shell (Git's sh on Windows).
-    const r = await exec(await shProgram(), ["-c", 'bin=$1 json=$2; shift 2; printf %s "$json" | "$bin" "$@"', "sh", this.bin, JSON.stringify(this.entry()), ...args]);
+    // exec has no stdin: hand the JSON over through the shell. Windows has no sh to trust
+    // (Git's collapses \\ in arguments), so there it goes as --entry (Nevram26's CLI build).
+    const json = JSON.stringify(this.entry());
+    const r = window()?.platform === "windows"
+      ? await exec(this.bin, [...args, "--entry", json])
+      : await exec("sh", ["-c", 'bin=$1 json=$2; shift 2; printf %s "$json" | "$bin" "$@"', "sh", this.bin, json, ...args]);
     if (r.code !== 0) throw new Error((r.stderr || r.stdout).trim());
     return JSON.parse(r.stdout);
   }
