@@ -6,7 +6,7 @@
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, TextareaState, Textarea } from "gpui-base";
-import { exec, hc, home, theme, terminals, spaces, run, notify, pickFolder, watchFolder, knownAgents } from "herdr";
+import { exec, hc, home, theme, terminals, spaces, run, notify, pickFolder, watchFolder, knownAgents, window } from "herdr";
 
 const PRESETS = [
   ["Hourly", "0 * * * *"],
@@ -63,7 +63,7 @@ export default class Automations extends View {
   // The CLI on PATH, else where install.sh and the dev symlink put it.
   async locate() {
     try { if ((await exec("herdr-automations", ["version"])).code === 0) return "herdr-automations"; } catch {}
-    return `${home()}/.local/bin/herdr-automations`;
+    return `${home()}/.local/bin/herdr-automations${window()?.platform === "windows" ? ".exe" : ""}`;
   }
 
   async cli(args) {
@@ -85,7 +85,7 @@ export default class Automations extends View {
 
   // Config and state folders: a change there is a change to show.
   watch(cx) {
-    const dirs = [this.list?.config?.replace(/\/[^/]+$/, ""), this.list?.state].filter(Boolean);
+    const dirs = [this.list?.config?.replace(/[\\/][^\\/]+$/, ""), this.list?.state].filter(Boolean);
     for (const dir of dirs) cx.spawn(async (cx) => {
       for (;;) { try { await watchFolder(dir); } catch { return; } await this.refresh(cx); }
     });
@@ -167,8 +167,12 @@ export default class Automations extends View {
 
   async put(dryRun) {
     const f = this.form, args = ["put", ...(f.original ? ["--original", f.original] : []), ...(dryRun ? ["--dry-run"] : [])];
-    // exec has no stdin: hand the JSON over through the shell.
-    const r = await exec("sh", ["-c", 'bin=$1 json=$2; shift 2; printf %s "$json" | "$bin" "$@"', "sh", this.bin, JSON.stringify(this.entry()), ...args]);
+    // exec has no stdin: hand the JSON over through the shell. Windows has no sh to trust
+    // (Git's collapses \\ in arguments), so there it goes as --entry (Nevram26's CLI build).
+    const json = JSON.stringify(this.entry());
+    const r = window()?.platform === "windows"
+      ? await exec(this.bin, [...args, "--entry", json])
+      : await exec("sh", ["-c", 'bin=$1 json=$2; shift 2; printf %s "$json" | "$bin" "$@"', "sh", this.bin, json, ...args]);
     if (r.code !== 0) throw new Error((r.stderr || r.stdout).trim());
     return JSON.parse(r.stdout);
   }
