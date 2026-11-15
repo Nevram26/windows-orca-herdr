@@ -1,5 +1,5 @@
-// Add a project (cmd-shift-n), after Orca's: open an existing folder, clone from a Git URL,
-// or create an empty one. Clones and new projects go under a default location that's
+// Add a project (cmd-shift-n, and the sidebar's +), after Orca's: open an existing folder, clone
+// one of your GitHub repos (or any Git URL), or create an empty one. Clones and new projects go under a default location that's
 // asked for once and remembered (shared "projects.location").
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
@@ -7,6 +7,9 @@ import { theme, props, closeOverlay, pickFolder, run, exec, home, shared, setSha
 import { shProgram, unix } from "./sh.js";
 
 const LOCATION = "projects.location";
+// Your GitHub repos, shared with the Issues repo picker (same key, same 30 minutes).
+const REPOS = "issues.allRepos", REPOS_TTL = 30 * 60 * 1000;
+const isUrl = (q) => q.includes("://") || q.startsWith("git@");
 // Home as ~, whichever slashes (git says C:/Users/x where Windows says C:\Users\x).
 const tilde = (p) => (p && p.replace(/\\/g, "/").startsWith(home().replace(/\\/g, "/")) ? `~${p.slice(home().length)}` : p ?? "");
 const expand = (p) => p.replace(/^~(?=$|[\\/])/, home());
@@ -22,7 +25,7 @@ const sh = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`;
 
 const ACTIONS = [
   { id: "browse", icon: "folder", title: "Browse folder", hint: "Local project, Git repo, or folder with many repos" },
-  { id: "clone", icon: "git-branch", title: "Clone from URL", hint: "Clone a remote Git repository" },
+  { id: "clone", icon: "git-branch", title: "Clone a repository", hint: "One of your GitHub repos, or any Git URL" },
   { id: "create", icon: "folder-plus", title: "Create new project", hint: "Start from an empty folder" },
 ];
 
@@ -37,10 +40,31 @@ export default class NewProject extends View {
       s.on("submit", (_e, cx) => onSubmit(cx));
       return s;
     };
-    this.url = field("https://github.com/owner/repo, owner/repo, or git@…", (cx) => this.clone(cx));
+    this.url = field("Search your repos, or paste a Git URL", (cx) => this.clone(cx));
     this.name = field("my-project", (cx) => this.create(cx));
     this.location = field("Where projects go, e.g. ~/Projects", (cx) => (this.step === "clone" ? this.clone(cx) : this.create(cx)));
     this.location.set_value(tilde(shared(LOCATION) ?? ""));
+    this.fetchRepos(cx);
+  }
+
+  // Every repo the gh login can see (owned, collaborator, organisations), newest push first.
+  fetchRepos(cx) {
+    if (Date.now() - (shared(REPOS)?.at ?? 0) < REPOS_TTL) return;
+    this.reposFailed = false;
+    cx.spawn(async (cx) => {
+      const r = await exec("gh", ["api", "--paginate", "user/repos?per_page=100&sort=pushed&affiliation=owner,collaborator,organization_member",
+        "-q", '.[] | [.full_name, (.private | tostring)] | @tsv']).catch(() => null);
+      const list = r?.code === 0 ? r.stdout.split("\n").filter(Boolean).map((l) => { const [repo, priv] = l.split("\t"); return { repo, private: priv === "true" }; }) : [];
+      if (list.length) setShared(REPOS, { at: Date.now(), list }); else this.reposFailed = true;
+      cx.notify();
+    });
+  }
+
+  // The repos matching what's typed; all of them when it's empty or one is already picked.
+  matches() {
+    const q = this.url.value().trim().toLowerCase(), all = shared(REPOS)?.list ?? [];
+    if (isUrl(q)) return [];
+    return all.some((r) => r.repo.toLowerCase() === q) || !q ? all : all.filter((r) => r.repo.toLowerCase().includes(q));
   }
 
   close() { closeOverlay(props()?.overlay); }
@@ -89,7 +113,9 @@ export default class NewProject extends View {
   // and it ends in a shell inside the repo.
   clone(cx) {
     if (this.busy) return;
-    const src = source(this.url.value());
+    // A search like "track" clones its first match.
+    const typed = this.url.value().trim(), first = this.matches()[0];
+    const src = source(!typed.includes("/") && !isUrl(typed) && first ? first.repo : typed);
     if (!src.name || (!src.gh && !src.url)) { this.error = "Enter a Git URL or owner/repo."; return cx.notify(); }
     this.busy = true; cx.notify();
     cx.spawn(async (cx) => {
@@ -190,18 +216,26 @@ export default class NewProject extends View {
 
   cloneStep(t) {
     const src = source(this.url.value()), q = this.url.value().trim().toLowerCase();
-    // Suggestions from the repos Issues already listed (shared "issues.allRepos"); no extra request.
-    const repos = q && !q.includes("://") && !q.startsWith("git@")
-      ? (shared("issues.allRepos")?.list ?? []).filter((r) => r.repo.toLowerCase().includes(q) && r.repo.toLowerCase() !== q).slice(0, 4) : [];
+    const repos = this.matches(), loading = !shared(REPOS) && !this.reposFailed;
     const dest = src.name && this.location.value().trim() ? `${this.location.value().trim().replace(/\/+$/, "")}/${src.name}` : "";
+    const note = (text) => div().px(8).py(8).text_size(12).text_color(t.dim).child(text);
     return v_flex().gap(14)
-      .child(this.header(t, "Clone from URL", "Enter the Git URL and choose where to clone it."))
-      .child(v_flex().gap(6).child(this.label(t, "Git URL")).child(this.input(t, "np-url", this.url))
-        .when(repos.length > 0, (el) => el.child(v_flex().p(4).gap(1).rounded(8).border_1().border_color(t.border).bg(t.popover)
-          .children(repos.map((r) => h_flex().id(`np-repo-${r.repo}`).h(28).px(8).gap(8).items_center().rounded(6).cursor_pointer()
-            .hover((s) => s.bg(t.hover)).on_click((_e, cx) => { this.url.set_value(r.repo); cx.notify(); })
-            .child(icon("git-branch", 13)).child(div().flex_1().truncate().text_size(12.5).child(r.repo))
-            .when(r.private, (el) => el.child(div().text_size(11).text_color(t.dim).child("private"))))))))
+      .child(this.header(t, "Clone a repository", "Pick one of your GitHub repos, or paste any Git URL."))
+      .child(v_flex().gap(6).child(this.label(t, "Repository")).child(this.input(t, "np-url", this.url))
+        .when(!isUrl(q), (el) => el.child(v_flex().id("np-repos").h(196).flex_none().overflow_y_scrollbar().p(4).gap(1)
+          .rounded(8).border_1().border_color(t.border).bg(t.background)
+          .children(repos.slice(0, 200).map((r) => {
+            const picked = r.repo.toLowerCase() === q;
+            return h_flex().id(`np-repo-${r.repo}`).h(30).flex_none().px(8).gap(8).items_center().rounded(6).cursor_pointer()
+              .when(picked, (el) => el.bg(t.selected)).hover((s) => s.bg(t.hover))
+              .on_click((_e, cx) => { this.url.set_value(r.repo); this.error = ""; cx.notify(); })
+              .child(icon("git-branch", 13)).child(div().flex_1().min_w(0).truncate().text_size(12.5).text_color(t.foreground).child(r.repo))
+              .when(r.private, (el) => el.child(div().flex_none().text_size(11).text_color(t.dim).child("private")))
+              .when(picked, (el) => el.child(div().flex_none().text_size(12).text_color(t.accent).child("✓")));
+          }))
+          .when(loading, (el) => el.child(note("Loading your repositories…")))
+          .when(this.reposFailed, (el) => el.child(note("Couldn't list your repos (is gh signed in?). Paste a URL instead.")))
+          .when(!loading && !this.reposFailed && !repos.length, (el) => el.child(note("No repos match. Enter owner/repo or a URL to clone anything else."))))))
       .child(this.locationField(t))
       .when(Boolean(dest), (el) => el.child(div().text_size(12).text_color(t.muted).child(`Clones into ${dest}, in a new space.`)))
       .when(Boolean(this.error), (el) => el.child(div().text_size(12.5).text_color(t.blocked).child(this.error)))
