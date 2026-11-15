@@ -53,5 +53,7 @@ export default {
   name: "Claude",
   icon: "icons/claude.svg",
   helper: "helpers/claude-usage.sh",
+  // Windows: run with Node (Git's sh polling could hang under Herdr and leave claude running).
+  nodeHelper: "helpers/claude-usage.mjs",
   parse,
 };

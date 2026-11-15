@@ -5,7 +5,7 @@
 // this mod never reads a token. Everything below main.js is pure and tested.
 import { View, div, image, svg } from "gpui-kit";
 import { Popover, h_flex, v_flex } from "gpui-base";
-import { exec, focused, theme, props, shared, setShared, appHome, notify } from "herdr";
+import { exec, focused, theme, props, shared, setShared, appHome, notify, window } from "herdr";
 import { PROVIDERS } from "./providers/index.js";
 import { barModel, cardModel, chooseDensity } from "./lib/view.js";
 import { effectivePrefs, isOnBar, isShown, toggleOnBar, toggleProvider, toggleShowBars, toggleShowRemaining, toggleShowResetTime, toggleWindow } from "./lib/prefs.js";
@@ -89,7 +89,11 @@ export default class UsageLimits extends View {
       let next;
       const prev = states()[p.id] ?? { report: null, lastGood: null, installed: null };
       try {
-        const r = await exec(await shProgram(), [`${appHome()}/mods/${MOD}/${p.helper}`]);
+        const path = (h) => `${appHome()}/mods/${MOD}/${h}`;
+        // Windows: the Node helper when Node is there, else the sh one.
+        const viaNode = p.nodeHelper && window()?.platform === "windows"
+          ? await exec("node", [path(p.nodeHelper)]).catch(() => null) : null;
+        const r = viaNode ?? await exec(await shProgram(), [path(p.helper)]);
         next = r.code === 127 ? nextState(prev, null, false) : nextState(prev, p.parse(r.stdout, now()), true);
       } catch (e) {
         next = { ...prev, report: { status: "error", message: String(e?.message ?? e), plan: null, observedAt: now(), source: p.helper, windows: [] } };
