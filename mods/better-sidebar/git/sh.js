@@ -1,7 +1,7 @@
 // `sh` and Unix tools that work on Windows too. Git for Windows puts only Git\cmd on PATH,
 // so its sh.exe is found from `git --exec-path`; Git's bin\sh.exe puts its Unix tools (cp,
 // find, sort...) first on the script's PATH. macOS, Linux and other machines: plain `sh`.
-// The same file is in better-sidebar/git, new-project, new-worktree and usage-limits:
+// The same file is in automations, better-sidebar/git, new-project, new-worktree and usage-limits:
 // keep the copies identical.
 import { exec, window } from "herdr";
 
