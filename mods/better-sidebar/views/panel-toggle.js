@@ -34,15 +34,15 @@ export class PanelToggle {
   render() {
     const t = theme();
     const panel = this.panel();
+    // props.rail: the copy at the top of the minimized panel's icon rail, centered and with no bar rule under it.
+    const rail = Boolean(props()?.rail);
     const bar = h_flex()
       .id("panel-toggle-bar")
       .size_full()
-      .pr(10)
       .items_center()
-      .justify_end()
       .bg(t.chrome)
-      .border_b(1)
-      .border_color(t.border);
+      .when(rail, (el) => el.justify_center())
+      .when(!rail, (el) => el.pr(10).justify_end().border_b(1).border_color(t.border));
     if (!panel) return bar;
     return bar.child(
       IconButton({

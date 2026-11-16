@@ -27,7 +27,7 @@ globalThis.Path2D ??= class Path2D { constructor(d) { this.d = d; } };
 // src/main.js
 import { View, div as div2, PathBuilder as PathBuilder2, image, svg } from "gpui-kit";
 import { TextareaState, Textarea } from "gpui-base";
-import { props, settings, theme, readTextFile, writeTextFile as writeTextFile2, watchFolder, notify, home as home2, appHome, run, focused, panes, closeOverlay } from "herdr";
+import { props, settings, theme, readTextFile, writeTextFile as writeTextFile2, watchFolder, notify, home as home2, appHome, run, focused, panes, closeOverlay, exec, window as window2 } from "herdr";
 import { Buffer } from "buffer";
 import * as fs2 from "fs/promises";
 
@@ -4694,6 +4694,18 @@ var Picker = class {
   path(name) {
     return `${this.folder}/${name}`;
   }
+  /** Deletes a drawing (Windows: to the Recycle Bin); the row asks "Delete?" first.
+   *  Not fs.unlink: a mod's fs may only write under ~/.config/herdr-app. */
+  async remove(name) {
+    this.arming = null;
+    const path = this.path(name);
+    const r = window2()?.platform === "windows"
+      ? await exec("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command",
+        `Add-Type -AssemblyName Microsoft.VisualBasic; [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile('${path.replace(/'/g, "''")}', 'OnlyErrorDialogs', 'SendToRecycleBin')`], { timeout: 20000 })
+      : await exec("rm", ["-f", "--", path], { timeout: 20000 });
+    await this.refresh();
+    if (r.code !== 0) throw new Error(r.stderr.trim() || `exit ${r.code}`);
+  }
   /** What ↑↓ Enter move over: the files, then the two actions. */
   items() {
     return [...this.files.map((name) => ({ kind: "file", name })), { kind: "new" }, { kind: "folder" }];
@@ -4725,7 +4737,7 @@ var Picker = class {
     return null;
   }
   /**
-   * `t` is Herdr's theme; `actions`: open(name), openInTab?(name), newDrawing(), chooseFolder().
+   * `t` is Herdr's theme; `actions`: open(name), remove(name), newDrawing(), chooseFolder().
    * `title` heads it; `escHint` shows "Esc" at the right, as Herdr's popups do; `bg` overrides
    * the popover background (a pane uses the terminals' background).
    */
@@ -4738,11 +4750,16 @@ var Picker = class {
     const files = this.files.map((name, i) => row(`file-${i}`, i, [
       div().w(14).flex_none().text_color(t.dim).child("\u25C7"),
       div().flex_1().truncate().text_color(t.foreground).child(name.slice(0, -EXT.length)),
-      actions.openInTab ? div().id(`file-tab-${i}`).px(6).rounded(5).text_size(11).text_color(t.muted).hover((s) => s.text_color(t.foreground).bg(t.raised)).on_mouse_down("left", (e4, cx) => {
-        cx.stop_propagation();
-        actions.openInTab(name, cx);
-      }).child("new tab") : div()
-    ], (cx) => actions.open(name, cx)));
+      // First click arms it ("Delete?"), the second deletes; opening or arming another row disarms it.
+      div().id(`file-del-${i}`).h(22).px(6).flex().flex_none().items_center().rounded(5).text_size(11).tooltip("Delete drawing")
+        .text_color(this.arming === name ? t.blocked : t.dim).hover((s) => s.bg(t.raised).text_color(t.blocked))
+        .on_mouse_down("left", (e4, cx) => {
+          cx.stop_propagation();
+          if (this.arming === name) actions.remove(name, cx);
+          else { this.arming = name; cx.notify(); }
+        })
+        .child(this.arming === name ? "Delete?" : svg("mods/excalidraw/icons/trash-2.svg").size(14))
+    ], (cx) => { this.arming = null; actions.open(name, cx); }));
     const n = this.files.length;
     const action = (i, glyph, label, onPress) => row(i === n ? "new-drawing" : "choose-folder", i, [
       div().w(14).flex_none().text_color(t.muted).child(glyph),
@@ -4825,7 +4842,8 @@ function resolveFile(file) {
   if (typeof file !== "string" || !file.trim()) return null;
   const f2 = file.trim();
   if (f2 === "~" || f2.startsWith("~/")) return home2() + f2.slice(1);
-  return f2.startsWith("/") ? f2 : null;
+  // Absolute only: "/x", or on Windows "C:\x" / "C:/x" and "\\server\share".
+  return /^(\/|[A-Za-z]:[\\/]|\\\\)/.test(f2) ? f2 : null;
 }
 var rectPath = (x1, y1, x2, y22, width, dash) => {
   let b = width ? PathBuilder2.stroke(width) : PathBuilder2.fill();
@@ -4879,7 +4897,6 @@ var Excalidraw = class extends View {
     this.watchGen = 0;
     const p2 = props() ?? {};
     this.overlay = p2.overlay ?? null;
-    this.fromPane = this.overlay ? focused()?.pane ?? null : null;
     cx.timer.every(200, (cx2) => this.tick(cx2));
     const file = resolveFile(p2.file) ?? (this.overlay ? null : resolveFile(localStorage.getItem("file")));
     if (file) this.openFile(file, cx);
@@ -4932,23 +4949,31 @@ var Excalidraw = class extends View {
       this.showPicker(cx2);
     });
   }
-  /** Opens a drawing: beside the launcher's pane (or in a new tab), or in this pane. */
-  choose(path, cx, { tab = false } = {}) {
+  /** Opens a drawing: from the popup in a new tab, or in this pane. */
+  choose(path, cx) {
     if (!this.overlay) {
       localStorage.setItem("file", path);
       this.openFile(path, cx);
       return;
     }
-    const spec = { mod: "excalidraw", props: { file: path } };
-    if (tab || !this.fromPane) run("tab.new", { name: basename(path), ...spec });
-    else run("pane.split", { direction: "right", pane: this.fromPane, ...spec });
+    run("tab.new", { name: basename(path), mod: "excalidraw", props: { file: path } });
     closeOverlay(this.overlay);
   }
   pickerActions() {
     const fail = (what, e4) => notify({ title: `Excalidraw: ${what}`, body: String(e4?.message ?? e4), level: "error" });
     return {
       open: (name, cx) => this.choose(this.picker.path(name), cx),
-      openInTab: this.overlay ? (name, cx) => this.choose(this.picker.path(name), cx, { tab: true }) : null,
+      remove: (name, cx) => cx.spawn(async (cx2) => {
+        const path = this.picker.path(name);
+        try {
+          await this.picker.remove(name);
+          // This pane's own drawing is gone: Esc mustn't reopen it.
+          if (this.file === path) this.file = null;
+        } catch (e4) {
+          fail("can't delete the drawing", e4);
+        }
+        cx2.notify();
+      }),
       newDrawing: (cx) => cx.spawn(async (cx2) => {
         try {
           this.choose(await this.picker.newDrawing(), cx2);

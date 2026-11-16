@@ -194,6 +194,15 @@ export default class Actions extends View {
     if (overlay === "menu") return menu(this);
     if (overlay === "edit") return editorView(this);
     const stop = (_e, cx) => cx.stop_propagation();
+    // props.rail: the minimized panel's icon rail has one icon: the actions menu, or Add action before there is one.
+    if (props()?.rail) {
+      const t = theme(), { list } = state();
+      return h_flex().id("actions-rail").size_full().items_center().justify_center().bg(t.chrome)
+        .child(div().id("actions-rail-icon").size(26).flex_none().flex().items_center().justify_center().rounded(6).text_color(t.muted).cursor_pointer()
+          .tooltip(list.length ? "Actions" : "Add action").hover(st => st.bg(t.hover).text_color(t.foreground)).role("button").accessibility_label("Actions")
+          .on_click(() => list.length ? openOverlay({ mod: MOD, kind: "popup", width: 280, height: Math.min(420, 61 + list.length * 32), props: { actions: "menu" } }) : editor(null))
+          .child(svg("mods/right-panel/icons/play.svg").size(16)));
+    }
     // Local fit: draw the bar's chrome and bottom rule like its neighbours in orca-2.
     return h_flex().size_full().items_center().justify_end().bg(theme().chrome).border_b(1).border_color(theme().border)
       .child(h_flex().id("actions-fit").flex_none().pr(8).items_center().on_size_change((size) => this.fit(size)).child(control(this, theme(), stop)));

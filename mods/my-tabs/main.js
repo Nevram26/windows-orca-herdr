@@ -1,6 +1,6 @@
 import { View, div, svg, image } from "gpui-kit";
 import { h_flex } from "gpui-base";
-import { spaces, panes, run, openOverlay, theme, window, shared, layout, settings, exec, focused, nextCommand, props, keys } from "herdr";
+import { spaces, panes, run, openOverlay, theme, window, shared, layout, settings, exec, focused, nextCommand, props } from "herdr";
 
 function find(node, id) {
   if (node?.id === id) return node;
@@ -55,15 +55,6 @@ function railToHidden(sidebar) {
   const width = shared("sidebar.width");
   run("layout.resize", { id: "sidebar", px: width >= 160 ? width : 268 });
   run("layout.hide", { id: "sidebar" });
-}
-
-// The drawing key as bound here (this layout's section first), not a hardcoded ⌘⇧E.
-function drawingTip() {
-  const mac = window()?.platform === "macos";
-  const names = { cmd: mac ? "⌘" : "Ctrl+", ctrl: mac ? "⌃" : "Ctrl+", shift: mac ? "⇧" : "Shift+", alt: mac ? "⌥" : "Alt+", option: mac ? "⌥" : "Alt+" };
-  const all = keys().filter((k) => k.action === "mod.open:excalidraw");
-  const b = all.find((k) => k.section === `layout:${shared("layout")}`) ?? all.find((k) => k.section === "global");
-  return b ? `Open a drawing (${b.keys.split("-").map((p) => names[p] ?? p.toUpperCase()).join("")})` : "Open a drawing";
 }
 
 export default class Tabs extends View {
@@ -154,31 +145,21 @@ export default class Tabs extends View {
       ? Math.max(10, (root.traffic_lights[0] + 64) / settings().zoom - (sidebar?.hidden ? 0 : sidebar?.size?.px ?? 0))
       : 10;
     const panel = find(root, "panel"), body = find(root, "panel-body");
-    // Only panels the side panel has: Issues and Automations are popups now (sidebar-nav).
-    const enabled = (shared("workspace.panels") ?? ["files", "changes"]).filter(id => body?.children?.some(c => c.id === id));
+    // Files, Changes and Chats always show as the panel's tabs (right-panel), whatever workspace.panels says.
+    const enabled = ["files", "changes", "chats"].filter(id => body?.children?.some(c => c.id === id));
+    // Panel open: Add action and the panel button sit in this bar. Minimized: the icon rail on the panel's edge has them.
+    const open = panel && !panel.hidden;
+    if (panel) for (const [id, hidden] of [["actions", !open], ["panel-toggle", !open], ["rail", open]]) {
+      const node = find(root, id);
+      if (node && Boolean(node.hidden) !== hidden) run(hidden ? "layout.hide" : "layout.show", { id });
+    }
     this.syncPanel(space, panel, body, enabled);
-    const panelButton = (id, label, icon) => {
-      const on = panel && !panel.hidden && body?.active === id;
-      return h_flex().id(`panel-${id}`).h(26).px(8).gap(5).flex_none().items_center().rounded(6)
-        .text_size(12).bg(on ? t.selected : t.chrome).text_color(on ? t.foreground : t.muted)
-        .hover(s => s.bg(t.hover)).on_mouse_down("left", stop)
-        .on_click(() => {
-          if (on) run("layout.hide", { id: "panel" });
-          else { run("layout.select", { stack: "panel-body", child: id }); run("layout.show", { id: "panel" }); }
-        }).child(svg(icon).size(14)).child(label);
-    };
     return h_flex().size_full().min_w(0).px(10).pl(lightsPadding).gap(3).items_center().bg(t.chrome).border_b(1).border_color(t.border)
       .on_mouse_up("left", () => { this.pressed = null; })
       .on_scroll_wheel(e => { if (Math.abs(e.delta.y) >= 1) run(e.delta.y > 0 ? "tab.prev" : "tab.next"); })
       .when(Boolean(sidebar), el => el.child(button("sidebar-toggle", svg("mods/workspace-chrome/sidebar.svg").size(15), () => run("layout.toggle", { id: "sidebar" }))
         .tooltip(sidebar.hidden ? "Show sidebar" : "Hide sidebar")))
       .child(h_flex().id("tab-scroll").flex_1().min_w(0).h_full().items_center().gap(3).overflow_x_scrollbar().children(shown.map(item)))
-      .child(button("tab-new", "+", () => openOverlay({ mod: "my-new-menu", kind: "popup", width: 250, height: 543 })))
-      .when(enabled.includes("files"), el => el.child(panelButton("files", "Files", "mods/files/file.svg")))
-      .when(enabled.includes("changes"), el => el.child(panelButton("changes", "Changes", "mods/changes/changes.svg")))
-      .child(h_flex().id("excalidraw").h(26).px(8).gap(5).flex_none().items_center().rounded(6).text_size(12).text_color(t.muted)
-        .hover(s => s.bg(t.hover).text_color(t.foreground)).tooltip(drawingTip()).on_mouse_down("left", stop)
-        .on_click(() => run("mod.open", { name: "excalidraw" }))
-        .child(svg("mods/excalidraw/icons/freedraw.svg").size(14)).child("Excalidraw"));
+      .child(button("tab-new", "+", () => openOverlay({ mod: "my-new-menu", kind: "popup", width: 250, height: 543 })));
   }
 }
