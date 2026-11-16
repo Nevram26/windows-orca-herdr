@@ -24,11 +24,11 @@
             {
               "id": "sidebar-nav",
               "type": "block",
-              "size": {
-                "px": 101
-              },
               "content": {
                 "mod": "sidebar-nav"
+              },
+              "size": {
+                "px": 101
               }
             },
             {
@@ -104,17 +104,18 @@
                 {
                   "id": "actions",
                   "type": "block",
-                  "size": {
-                    "px": 108
-                  },
-                  "window_drag": true,
-                  "background": "chrome",
                   "content": {
                     "mod": "t3-actions",
                     "props": {
                       "block": "actions"
                     }
-                  }
+                  },
+                  "size": {
+                    "px": 108
+                  },
+                  "hidden": true,
+                  "background": "chrome",
+                  "window_drag": true
                 },
                 {
                   "id": "panel-toggle",
@@ -129,6 +130,7 @@
                   "size": {
                     "px": 36
                   },
+                  "hidden": true,
                   "window_drag": true
                 },
                 {
@@ -143,8 +145,8 @@
                   "size": {
                     "px": 104
                   },
-                  "window_drag": true,
-                  "hidden": true
+                  "hidden": true,
+                  "window_drag": true
                 }
               ],
               "size": {
@@ -190,6 +192,19 @@
                   "type": "column",
                   "children": [
                     {
+                      "id": "panel-tabs",
+                      "type": "block",
+                      "content": {
+                        "mod": "right-panel",
+                        "props": {
+                          "view": "tabs"
+                        }
+                      },
+                      "size": {
+                        "px": 38
+                      }
+                    },
+                    {
                       "id": "panel-body",
                       "type": "stack",
                       "children": [
@@ -202,9 +217,41 @@
                         },
                         {
                           "id": "changes",
+                          "type": "column",
+                          "children": [
+                            {
+                              "id": "changes-main",
+                              "type": "block",
+                              "content": {
+                                "mod": "better-changes"
+                              },
+                              "size": {
+                                "weight": 1
+                              }
+                            },
+                            {
+                              "id": "pr-bar",
+                              "type": "block",
+                              "content": {
+                                "mod": "right-panel",
+                                "props": {
+                                  "view": "pr"
+                                }
+                              },
+                              "size": {
+                                "px": 40
+                              }
+                            }
+                          ]
+                        },
+                        {
+                          "id": "chats",
                           "type": "block",
                           "content": {
-                            "mod": "better-changes"
+                            "mod": "right-panel",
+                            "props": {
+                              "view": "chats"
+                            }
                           }
                         }
                       ],
@@ -217,6 +264,57 @@
                   "min": 280,
                   "max": 900,
                   "hidden": true
+                },
+                {
+                  "id": "rail",
+                  "type": "column",
+                  "children": [
+                    {
+                      "id": "rail-toggle",
+                      "type": "block",
+                      "content": {
+                        "mod": "better-sidebar",
+                        "props": {
+                          "view": "panel-toggle",
+                          "target": "panel",
+                          "rail": true
+                        }
+                      },
+                      "size": {
+                        "px": 36
+                      }
+                    },
+                    {
+                      "id": "rail-actions",
+                      "type": "block",
+                      "content": {
+                        "mod": "t3-actions",
+                        "props": {
+                          "rail": true
+                        }
+                      },
+                      "size": {
+                        "px": 36
+                      }
+                    },
+                    {
+                      "id": "rail-icons",
+                      "type": "block",
+                      "content": {
+                        "mod": "right-panel",
+                        "props": {
+                          "view": "rail"
+                        }
+                      },
+                      "size": {
+                        "weight": 1
+                      }
+                    }
+                  ],
+                  "size": {
+                    "px": 40
+                  },
+                  "background": "chrome"
                 }
               ],
               "padding": 8,
@@ -266,11 +364,11 @@
         {
           "id": "resources",
           "type": "block",
-          "size": {
-            "px": 150
-          },
           "content": {
             "mod": "resources"
+          },
+          "size": {
+            "px": 150
           }
         },
         {
@@ -315,11 +413,11 @@
     {
       "id": "hibernate",
       "type": "block",
-      "size": {
-        "px": 0
-      },
       "content": {
         "mod": "hibernate"
+      },
+      "size": {
+        "px": 0
       }
     }
   ],

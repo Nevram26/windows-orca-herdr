@@ -23,13 +23,13 @@ function element() {
 const find = (node, id) => !node || typeof node !== "object" ? null : node.key === id ? node : node.items.map(c => find(c, id)).find(Boolean) ?? null;
 
 const state = {}, calls = [];
-let sidebar, windowBlock;
+let sidebar, windowBlock, panelNode, railNode, actionsNode;
 let viewProps = {}, windowInfo = { platform: "macos" };
 let bindings = [];
 const env = {
   View: class {}, div: element, h_flex: element, svg: element, image: element,
   theme: () => new Proxy({}, { get: () => "#000" }), settings: () => ({ zoom: 1 }), window: () => windowInfo, props: () => viewProps,
-  layout: () => ({ id: "root", children: [sidebar, ...(windowBlock ? [windowBlock] : [])] }), shared: (k) => state[k],
+  layout: () => ({ id: "root", children: [sidebar, ...(windowBlock ? [windowBlock] : []), ...(panelNode ? [panelNode, railNode, actionsNode, { id: "panel-toggle", hidden: actionsNode.hidden }] : [])] }), shared: (k) => state[k],
   run: (name, args) => calls.push([name, args == null ? args : JSON.parse(JSON.stringify(args))]), spaces: () => [], panes: () => [], focused: () => null,
   openOverlay() {}, exec() {}, nextCommand: () => new Promise(() => {}),
   keys: () => bindings,
@@ -92,15 +92,23 @@ for (const [id, command] of [["minimize", "window.minimize"], ["maximize", "wind
   assert.deepEqual(calls.pop(), [command, undefined]);
 }
 
-// The drawing button names the key bound here, this layout's section first.
-windowInfo = { platform: "windows" };
-state.layout = "orca";
-bindings = [{ section: "global", keys: "ctrl-e", action: "mod.open:excalidraw" }, { section: "layout:orca", keys: "alt-shift-e", action: "mod.open:excalidraw" }];
-assert.equal(context.drawingTip(), "Open a drawing (Alt+Shift+E)");
-windowInfo = { platform: "macos" };
-bindings = [{ section: "global", keys: "cmd-shift-e", action: "mod.open:excalidraw" }];
-assert.equal(context.drawingTip(), "Open a drawing (⌘⇧E)");
-bindings = [];
-assert.equal(context.drawingTip(), "Open a drawing");
+// Files, Changes and Excalidraw moved to the right panel's tab strip and rail.
+const barNow = tabs.render();
+for (const id of ["panel-files", "panel-changes", "excalidraw"]) assert.equal(find(barNow, id), null);
+
+// Panel open: Add action and the panel button are in the bar, the rail is hidden. Minimized: the other way round.
+calls.length = 0;
+viewProps = {};
+panelNode = { id: "panel", hidden: false, children: [] }; railNode = { id: "rail" }; actionsNode = { id: "actions", hidden: true };
+tabs.render();
+assert.deepEqual(calls.map(c => `${c[0]} ${JSON.stringify(c[1])}`).sort(), ['layout.hide {"id":"rail"}', 'layout.show {"id":"actions"}', 'layout.show {"id":"panel-toggle"}'].sort());
+calls.length = 0;
+panelNode = { id: "panel", hidden: true, children: [] }; railNode = { id: "rail", hidden: true }; actionsNode = { id: "actions" };
+tabs.render();
+assert.deepEqual(calls.map(c => `${c[0]} ${JSON.stringify(c[1])}`).sort(), ['layout.hide {"id":"actions"}', 'layout.hide {"id":"panel-toggle"}', 'layout.show {"id":"rail"}'].sort());
+calls.length = 0;
+railNode = { id: "rail" }; actionsNode = { id: "actions", hidden: true };
+tabs.render();
+assert.deepEqual(calls, [], "already in step: nothing to do");
 
 console.log("my-tabs: ok");
