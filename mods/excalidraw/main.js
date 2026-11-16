@@ -4725,7 +4725,7 @@ var Picker = class {
     return null;
   }
   /**
-   * `t` is Herdr's theme; `actions`: open(name), openInTab?(name), newDrawing(), chooseFolder().
+   * `t` is Herdr's theme; `actions`: open(name), newDrawing(), chooseFolder().
    * `title` heads it; `escHint` shows "Esc" at the right, as Herdr's popups do; `bg` overrides
    * the popover background (a pane uses the terminals' background).
    */
@@ -4737,11 +4737,7 @@ var Picker = class {
     }).children(content);
     const files = this.files.map((name, i) => row(`file-${i}`, i, [
       div().w(14).flex_none().text_color(t.dim).child("\u25C7"),
-      div().flex_1().truncate().text_color(t.foreground).child(name.slice(0, -EXT.length)),
-      actions.openInTab ? div().id(`file-tab-${i}`).px(6).rounded(5).text_size(11).text_color(t.muted).hover((s) => s.text_color(t.foreground).bg(t.raised)).on_mouse_down("left", (e4, cx) => {
-        cx.stop_propagation();
-        actions.openInTab(name, cx);
-      }).child("new tab") : div()
+      div().flex_1().truncate().text_color(t.foreground).child(name.slice(0, -EXT.length))
     ], (cx) => actions.open(name, cx)));
     const n = this.files.length;
     const action = (i, glyph, label, onPress) => row(i === n ? "new-drawing" : "choose-folder", i, [
@@ -4825,7 +4821,8 @@ function resolveFile(file) {
   if (typeof file !== "string" || !file.trim()) return null;
   const f2 = file.trim();
   if (f2 === "~" || f2.startsWith("~/")) return home2() + f2.slice(1);
-  return f2.startsWith("/") ? f2 : null;
+  // Absolute only: "/x", or on Windows "C:\x" / "C:/x" and "\\server\share".
+  return /^(\/|[A-Za-z]:[\\/]|\\\\)/.test(f2) ? f2 : null;
 }
 var rectPath = (x1, y1, x2, y22, width, dash) => {
   let b = width ? PathBuilder2.stroke(width) : PathBuilder2.fill();
@@ -4879,7 +4876,6 @@ var Excalidraw = class extends View {
     this.watchGen = 0;
     const p2 = props() ?? {};
     this.overlay = p2.overlay ?? null;
-    this.fromPane = this.overlay ? focused()?.pane ?? null : null;
     cx.timer.every(200, (cx2) => this.tick(cx2));
     const file = resolveFile(p2.file) ?? (this.overlay ? null : resolveFile(localStorage.getItem("file")));
     if (file) this.openFile(file, cx);
@@ -4932,23 +4928,20 @@ var Excalidraw = class extends View {
       this.showPicker(cx2);
     });
   }
-  /** Opens a drawing: beside the launcher's pane (or in a new tab), or in this pane. */
-  choose(path, cx, { tab = false } = {}) {
+  /** Opens a drawing: from the popup in a new tab, or in this pane. */
+  choose(path, cx) {
     if (!this.overlay) {
       localStorage.setItem("file", path);
       this.openFile(path, cx);
       return;
     }
-    const spec = { mod: "excalidraw", props: { file: path } };
-    if (tab || !this.fromPane) run("tab.new", { name: basename(path), ...spec });
-    else run("pane.split", { direction: "right", pane: this.fromPane, ...spec });
+    run("tab.new", { name: basename(path), mod: "excalidraw", props: { file: path } });
     closeOverlay(this.overlay);
   }
   pickerActions() {
     const fail = (what, e4) => notify({ title: `Excalidraw: ${what}`, body: String(e4?.message ?? e4), level: "error" });
     return {
       open: (name, cx) => this.choose(this.picker.path(name), cx),
-      openInTab: this.overlay ? (name, cx) => this.choose(this.picker.path(name), cx, { tab: true }) : null,
       newDrawing: (cx) => cx.spawn(async (cx2) => {
         try {
           this.choose(await this.picker.newDrawing(), cx2);
