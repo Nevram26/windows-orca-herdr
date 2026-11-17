@@ -147,9 +147,9 @@ export default class Tabs extends View {
     const panel = find(root, "panel"), body = find(root, "panel-body");
     // Files, Changes and Chats always show as the panel's tabs (right-panel), whatever workspace.panels says.
     const enabled = ["files", "changes", "chats"].filter(id => body?.children?.some(c => c.id === id));
-    // Panel open: Add action and the panel button sit in this bar. Minimized: the icon rail on the panel's edge has them.
+    // The panel button stays in this bar; Add action moves to the icon rail when minimized.
     const open = panel && !panel.hidden;
-    if (panel) for (const [id, hidden] of [["actions", !open], ["panel-toggle", !open], ["rail", open]]) {
+    if (panel) for (const [id, hidden] of [["actions", !open], ["panel-toggle", false], ["rail", open]]) {
       const node = find(root, id);
       if (node && Boolean(node.hidden) !== hidden) run(hidden ? "layout.hide" : "layout.show", { id });
     }
@@ -157,8 +157,8 @@ export default class Tabs extends View {
     return h_flex().size_full().min_w(0).px(10).pl(lightsPadding).gap(3).items_center().bg(t.chrome).border_b(1).border_color(t.border)
       .on_mouse_up("left", () => { this.pressed = null; })
       .on_scroll_wheel(e => { if (Math.abs(e.delta.y) >= 1) run(e.delta.y > 0 ? "tab.prev" : "tab.next"); })
-      .when(Boolean(sidebar), el => el.child(button("sidebar-toggle", svg("mods/workspace-chrome/sidebar.svg").size(15), () => run("layout.toggle", { id: "sidebar" }))
-        .tooltip(sidebar.hidden ? "Show sidebar" : "Hide sidebar")))
+      .when(Boolean(sidebar?.hidden), el => el.child(button("sidebar-toggle", svg("mods/workspace-chrome/sidebar.svg").size(15), () => run("layout.toggle", { id: "sidebar" }))
+        .tooltip("Show sidebar")))
       .child(h_flex().id("tab-scroll").flex_1().min_w(0).h_full().items_center().gap(3).overflow_x_scrollbar().children(shown.map(item)))
       .child(button("tab-new", "+", () => openOverlay({ mod: "my-new-menu", kind: "popup", width: 250, height: 543 })));
   }

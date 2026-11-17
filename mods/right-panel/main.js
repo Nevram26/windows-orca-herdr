@@ -33,7 +33,7 @@ class Tabs {
   }
 }
 
-// What the minimized panel leaves: Files, Changes, Chats and Excalidraw under the show-panel and actions blocks above.
+// What the minimized panel leaves: Files, Changes, Chats and Excalidraw under the actions block above.
 class Rail {
   render() {
     const t = theme();

@@ -6,7 +6,7 @@ resumed after a restart), a resource meter, a hover card per worktree, in-app Gi
 (from a branch, an issue, a PR or a new name), run actions, usage limits and live ports.
 
 The right panel has **Files · Changes · Chats · Draw** tabs, and minimizes to an icon rail on the
-right edge (with the panel toggle and Add action) instead of buttons in the top bar:
+right edge (with Add action). The panel toggle stays in the top bar when collapsed:
 
 - **Changes**: Git changes and commits (Better Changes), plus **Push** and **Create PR** (a small
   box prefilled from the branch's commits, then `gh pr create`).

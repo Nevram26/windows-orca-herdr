@@ -130,7 +130,6 @@
                   "size": {
                     "px": 36
                   },
-                  "hidden": true,
                   "window_drag": true
                 },
                 {
@@ -269,21 +268,6 @@
                   "id": "rail",
                   "type": "column",
                   "children": [
-                    {
-                      "id": "rail-toggle",
-                      "type": "block",
-                      "content": {
-                        "mod": "better-sidebar",
-                        "props": {
-                          "view": "panel-toggle",
-                          "target": "panel",
-                          "rail": true
-                        }
-                      },
-                      "size": {
-                        "px": 36
-                      }
-                    },
                     {
                       "id": "rail-actions",
                       "type": "block",

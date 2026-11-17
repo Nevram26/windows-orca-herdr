@@ -1,4 +1,4 @@
-// node mods/my-tabs/check.cjs: the tab bar's sidebar button, and a rail turning into a hide.
+// node mods/my-tabs/check.cjs: tab bar controls and sidebar/panel visibility.
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
@@ -23,13 +23,13 @@ function element() {
 const find = (node, id) => !node || typeof node !== "object" ? null : node.key === id ? node : node.items.map(c => find(c, id)).find(Boolean) ?? null;
 
 const state = {}, calls = [];
-let sidebar, windowBlock, panelNode, railNode, actionsNode;
+let sidebar, windowBlock, panelNode, railNode, actionsNode, panelToggleNode;
 let viewProps = {}, windowInfo = { platform: "macos" };
 let bindings = [];
 const env = {
   View: class {}, div: element, h_flex: element, svg: element, image: element,
   theme: () => new Proxy({}, { get: () => "#000" }), settings: () => ({ zoom: 1 }), window: () => windowInfo, props: () => viewProps,
-  layout: () => ({ id: "root", children: [sidebar, ...(windowBlock ? [windowBlock] : []), ...(panelNode ? [panelNode, railNode, actionsNode, { id: "panel-toggle", hidden: actionsNode.hidden }] : [])] }), shared: (k) => state[k],
+  layout: () => ({ id: "root", children: [sidebar, ...(windowBlock ? [windowBlock] : []), ...(panelNode ? [panelNode, railNode, actionsNode, panelToggleNode] : [])] }), shared: (k) => state[k],
   run: (name, args) => calls.push([name, args == null ? args : JSON.parse(JSON.stringify(args))]), spaces: () => [], panes: () => [], focused: () => null,
   openOverlay() {}, exec() {}, nextCommand: () => new Promise(() => {}),
   keys: () => bindings,
@@ -42,18 +42,21 @@ vm.runInContext(source, context);
 const tabs = new context.Mod();
 tabs.init({}, { spawn() {} });
 
-// Shown at full width: the button hides it, and says so.
+// The tab bar has no duplicate of the brand header's left-sidebar button.
 sidebar = { id: "sidebar", size: { px: 268 } };
-let button = find(tabs.render(), "sidebar-toggle");
-assert.equal(button.style.tooltip, "Hide sidebar");
-button.handlers.on_click();
-assert.deepEqual(calls, [["layout.toggle", { id: "sidebar" }]]);
+assert.equal(find(tabs.render(), "sidebar-toggle"), null);
+assert.deepEqual(calls, []);
 
-// Hidden: the button is still there, to show it again.
+// Hidden: the tab-bar button returns so the left sidebar can be reopened.
 calls.length = 0;
 sidebar = { id: "sidebar", hidden: true, size: { px: 268 } };
-assert.equal(find(tabs.render(), "sidebar-toggle").style.tooltip, "Show sidebar");
+const sidebarButton = find(tabs.render(), "sidebar-toggle");
+assert.ok(sidebarButton, "hidden left sidebar exposes its reopen button");
+assert.equal(sidebarButton.style.tooltip, "Show sidebar");
 assert.deepEqual(calls, [], "hidden is left alone");
+sidebarButton.handlers.on_click();
+assert.deepEqual(calls, [["layout.toggle", { id: "sidebar" }]]);
+calls.length = 0;
 
 // Herdr's brand button made a rail: hidden instead, back at the width it saved.
 state["sidebar.width"] = 300;
@@ -96,19 +99,32 @@ for (const [id, command] of [["minimize", "window.minimize"], ["maximize", "wind
 const barNow = tabs.render();
 for (const id of ["panel-files", "panel-changes", "excalidraw"]) assert.equal(find(barNow, id), null);
 
-// Panel open: Add action and the panel button are in the bar, the rail is hidden. Minimized: the other way round.
+// The panel button stays in the bar; only Add action moves to the rail when minimized.
 calls.length = 0;
 viewProps = {};
 panelNode = { id: "panel", hidden: false, children: [] }; railNode = { id: "rail" }; actionsNode = { id: "actions", hidden: true };
+panelToggleNode = { id: "panel-toggle", hidden: true };
 tabs.render();
 assert.deepEqual(calls.map(c => `${c[0]} ${JSON.stringify(c[1])}`).sort(), ['layout.hide {"id":"rail"}', 'layout.show {"id":"actions"}', 'layout.show {"id":"panel-toggle"}'].sort());
 calls.length = 0;
 panelNode = { id: "panel", hidden: true, children: [] }; railNode = { id: "rail", hidden: true }; actionsNode = { id: "actions" };
+panelToggleNode = { id: "panel-toggle" };
 tabs.render();
-assert.deepEqual(calls.map(c => `${c[0]} ${JSON.stringify(c[1])}`).sort(), ['layout.hide {"id":"actions"}', 'layout.hide {"id":"panel-toggle"}', 'layout.show {"id":"rail"}'].sort());
+assert.deepEqual(calls.map(c => `${c[0]} ${JSON.stringify(c[1])}`).sort(), ['layout.hide {"id":"actions"}', 'layout.show {"id":"rail"}'].sort());
 calls.length = 0;
 railNode = { id: "rail" }; actionsNode = { id: "actions", hidden: true };
 tabs.render();
 assert.deepEqual(calls, [], "already in step: nothing to do");
+
+// A saved collapsed layout may still have the top toggle hidden from the old behavior.
+panelToggleNode.hidden = true;
+tabs.render();
+assert.deepEqual(calls, [["layout.show", { id: "panel-toggle" }]]);
+
+// The shipped layout exposes the top toggle immediately and has no duplicate in the rail.
+const shipped = JSON.parse(fs.readFileSync(path.join(__dirname, "../../layouts/orca.json"), "utf8"));
+const nodes = (node) => [node, ...(node.children ?? []).flatMap(nodes)];
+assert.equal(nodes(shipped).find(n => n.id === "tabs-row").children.find(n => n.id === "panel-toggle").hidden ?? false, false);
+assert.equal(nodes(shipped).some(n => n.id === "rail-toggle"), false);
 
 console.log("my-tabs: ok");
