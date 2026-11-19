@@ -220,22 +220,25 @@ export default class Issues extends View {
 
   kind() { return this.tab === "prs" ? "pr" : "issue"; }
 
-  spaceFor(i) { return spaceFor(i, this.tab === "prs"); }
+  spaceFor(i, repo = this.repo, pr = this.tab === "prs") { return spaceFor(i, pr, this.workspaceContext(repo)); }
 
   // A local folder of the repo, for git worktree; null when none is known (a repo picked
   // from GitHub that isn't checked out here), rather than some other repo's folder.
-  folder(repo = this.repo) {
-    const on = this.onOf(repo);
+  folder(repo = this.repo, on = this.onOf(repo)) {
     const hit = Object.entries(this.repos).find(([k, v]) => v === repo && (JSON.parse(k)[1] ?? null) === (on ?? null));
     return hit ? JSON.parse(hit[0])[0] : null;
+  }
+
+  workspaceContext(repo = this.repo, machine = this.onOf(repo)) {
+    return { repo, machine, folder: this.folder(repo, machine), repos: this.repos };
   }
 
   // Start: the Create worktree dialog with this issue or PR picked; Open when its space exists.
   // repo/pr: a Projects item, or a row of All repos, can be from another repo than the picked one.
   start(i, cx, { repo = this.repo, pr = this.tab === "prs" } = {}) {
-    const folder = this.folder(repo);
+    const { folder, machine } = this.workspaceContext(repo);
     if (!folder) { (this.tab === "projects" ? this.projects : this).error = `No checkout of ${repo} is known here. Open a terminal in one, then Start.`; return cx.notify(); }
-    const args = { repo, machine: this.onOf(repo), folder, item: i, pr, overlay: this.overlay };
+    const args = { ...this.workspaceContext(repo, machine), repos: { ...this.repos }, item: i, pr, overlay: this.overlay };
     cx.spawn(async () => startWorkspace(args));
   }
 
@@ -243,7 +246,7 @@ export default class Issues extends View {
     const on = this.onOf(repo);
     openOverlay({ mod: "issues", kind: "dialog", width: 0.86, height: 0.9, props: { issue: {
       repo, number: i.number, on, data: null, me: this.me,
-      pr, folder: this.folder(repo), machine: on } } });
+      pr, folder: this.folder(repo, on), machine: on, repos: this.repos } } });
   }
 
   // Under the control just pressed: Herdr's default spot (the pointer) isn't tracked over
@@ -428,7 +431,8 @@ export default class Issues extends View {
       .child(cell(96, label("ID"))).child(div().flex_1().child(label("TITLE / CONTEXT")))
       .child(cell(120, label("ASSIGNEES"))).child(cell(120, label("STATUS"))).child(cell(130, label("UPDATED"))).child(cell(130, div()));
 
-    const s = this.status(i, t), space = this.spaceFor(i), repoName = repo.split("/")[1];
+    const s = this.status(i, t), pr = this.tab === "prs", workspace = this.workspaceContext(repo);
+    const space = this.spaceFor(i, repo, pr), repoName = repo.split("/")[1];
     const assignees = i.assignees ?? [];
     const stop = (e, cx) => { this.press = e; cx.stop_propagation(); };
     const kind = this.kind(), n = String(i.number);
@@ -472,7 +476,7 @@ export default class Issues extends View {
         .child(this.glyph(s.glyph, 12, s.color)).child(s.label).child(this.glyph("chevron", 11, s.color))))
       .child(cell(130, div().text_size(12).text_color(t.muted).child(updated(i.updatedAt))))
       .child(cell(130, h_flex().gap(6).items_center().justify_end()
-        .child(this.btn(`start-${n}`, t, [div().font_medium().child(space ? "Open" : "Start"), this.glyph("arrow", 14)], (cx) => this.start(i, cx, { repo }), { solid: Boolean(space), h: 30 }))
+        .when(Boolean(workspace.folder), (e) => e.child(this.btn(`start-${n}`, t, [div().font_medium().child(space ? "Open" : "Start"), this.glyph("arrow", 14)], (cx) => this.start(i, cx, { repo }), { solid: Boolean(space), h: 30 })))
         .child(div().id(`more-${n}`).size(28).flex().items_center().justify_center().rounded(6).text_color(t.muted)
           .hover((st) => st.bg(t.raised).text_color(t.foreground)).on_mouse_down("left", stop)
           .on_click((_e, cx) => {

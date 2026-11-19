@@ -4,7 +4,7 @@ import { exec, theme, openOverlay, closeOverlay, setShared, window, settings } f
 import { icons, icon, avatarPath, loadAvatar } from "./icons.js";
 import { blocks, picture, failed, loadPicture } from "./pictures.js";
 import { PR_DETAIL, COLOR, MERGE, checks, checkSummary, linkedIssues, filesTab, checksTab } from "./pr.js";
-import { spaceFor, startWorkspace } from "./start.js";
+import { checkoutFor, spaceFor, startWorkspace } from "./start.js";
 import { readCache, writeCache, age } from "./cache.js";
 
 export const FIELDS = "number,title,body,author,state,stateReason,labels,assignees,createdAt,updatedAt,comments,url";
@@ -127,9 +127,9 @@ export function labelChip(l, t) {
 // With data it shows at once; the full item and its timeline load behind it. folder and
 // machine (a checkout of the repo) let Start workspace make a worktree. Links open here, with Back.
 export class Viewer {
-  constructor({ repo, number, on, data, me, pr, folder, machine, tab }, overlay, cx) {
+  constructor({ repo, number, on, data, me, pr, folder, machine, repos = {}, tab }, overlay, cx) {
     this.repo = repo; this.number = number; this.on = on; this.me = me; this.overlay = overlay;
-    this.folder = folder ?? null; this.machine = machine ?? on ?? null;
+    this.folder = folder ?? null; this.machine = machine ?? on ?? null; this.repos = repos;
     this.history = []; this.cache = {}; this.timelines = {}; this.labels = {}; this.tab = "write";
     this.kinds = {}; this.diffs = {}; this.openFiles = new Set(); this.prTab = "conversation"; this.mergeMethod = "squash";
     if (typeof pr === "boolean") this.kinds[`${repo}#${number}`] = pr;
@@ -186,7 +186,12 @@ export class Viewer {
 
   go(repo, number, cx) {
     if (repo === this.repo && number === this.number) return;
-    this.history.push({ repo: this.repo, number: this.number });
+    this.history.push({ repo: this.repo, number: this.number, on: this.on, folder: this.folder, machine: this.machine });
+    if (repo !== this.repo) {
+      const next = checkoutFor(repo, this.repos, this.machine);
+      this.folder = next.folder; this.machine = next.machine;
+      if (next.machine !== undefined) this.on = next.machine;
+    }
     this.repo = repo; this.number = number; this.reset();
     this.load(cx); cx.notify();
   }
@@ -194,7 +199,7 @@ export class Viewer {
   back(cx) {
     const prev = this.history.pop();
     if (!prev) return;
-    this.repo = prev.repo; this.number = prev.number; this.reset();
+    Object.assign(this, prev); this.reset();
     this.load(cx); cx.notify();
   }
 
@@ -206,7 +211,11 @@ export class Viewer {
   // Start (or open) a worktree for this issue or PR, as the issues table does.
   workspace(cx) {
     const i = this.issue;
-    if (i) cx.spawn(async () => startWorkspace({ repo: this.repo, machine: this.machine, folder: this.folder, item: i, pr: this.isPr(), overlay: this.overlay }));
+    if (i) {
+      const context = checkoutFor(this.repo, this.repos, this.machine, this.folder);
+      const args = { ...context, repos: { ...this.repos }, item: i, pr: this.isPr(), overlay: this.overlay };
+      cx.spawn(async () => startWorkspace(args));
+    }
   }
 
   merge(cx) {
@@ -618,7 +627,9 @@ export class Viewer {
     const [state, color, glyph] = pr ? [prState(i).label, prState(i).color, prState(i).glyph]
       : i.state === "OPEN" ? ["Open", GITHUB.open, "issue"]
       : i.stateReason === "NOT_PLANNED" ? ["Closed", GITHUB.skipped, "skipped"] : ["Closed", GITHUB.done, "done"];
-    const space = spaceFor(i, pr), branch = (name) => div().px(6).py(1).rounded(5).bg(t.raised).font_family(settings().font_family).text_size(12).text_color(t.foreground).child(name ?? "");
+    const workspace = checkoutFor(this.repo, this.repos, this.machine, this.folder);
+    const space = spaceFor(i, pr, { ...workspace, repos: this.repos });
+    const branch = (name) => div().px(6).py(1).rounded(5).bg(t.raised).font_family(settings().font_family).text_size(12).text_color(t.foreground).child(name ?? "");
     return v_flex().id("issue").size_full().min_h(0).bg(t.background).text_color(t.foreground).text_size(14)
       .on_size_change((size, cx) => { if (size.width !== this.width) { this.width = size.width; cx.notify(); } })
       .child(v_flex().flex_none().px(32).pt(14).pb(pr ? 0 : 18).gap(14).border_b(1).border_color(t.border)
@@ -627,7 +638,7 @@ export class Viewer {
           // Word by word, so the title wraps like text with the number after its last word.
           .child(h_flex().flex_1().min_w(0).flex_wrap().gap_x(8).text_size(30).children(i.title.split(/\s+/).filter(Boolean).map((w) => div().child(w)))
             .child(div().text_color(t.muted).child(`#${i.number}`)))
-          .when(Boolean(space || this.folder), (e) => e.child(div().pt(4).child(this.button("issue-workspace", space ? "Open workspace" : "Start workspace", t,
+          .when(Boolean(space || workspace.folder), (e) => e.child(div().pt(4).child(this.button("issue-workspace", space ? "Open workspace" : "Start workspace", t,
             (_e, cx) => this.workspace(cx), { glyph: "arrow" })))))
         .child(h_flex().gap(8).items_center().flex_wrap()
           .child(h_flex().h(32).px(12).gap(6).items_center().rounded(16).bg(color).text_color("#ffffff").text_size(14).font_semibold()

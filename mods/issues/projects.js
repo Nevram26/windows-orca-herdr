@@ -409,7 +409,8 @@ export class Projects {
 
   startBtn(i, t, h) {
     if (!i.number || !i.repo) return div();
-    const pr = i.type === "PullRequest", space = spaceFor(i, pr);
+    const pr = i.type === "PullRequest", workspace = this.host.workspaceContext(i.repo), space = spaceFor(i, pr, workspace);
+    if (!workspace.folder) return div();
     return this.host.btn(`pstart-${i.id}`, t, [div().font_medium().child(space ? "Open" : "Start"), this.host.glyph("arrow", 13)],
       (cx) => this.host.start(i, cx, { repo: i.repo, pr }), { solid: Boolean(space), h });
   }
