@@ -1,6 +1,6 @@
 import { div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, TextView, TextareaState, Textarea, InputState, Input } from "gpui-base";
-import { exec, theme, openOverlay, closeOverlay, setShared, window, settings } from "herdr";
+import { exec, theme, openOverlay, closeOverlay, shared, setShared, window, settings } from "herdr";
 import { icons, icon, avatarPath, loadAvatar } from "./icons.js";
 import { blocks, picture, failed, loadPicture } from "./pictures.js";
 import { PR_DETAIL, COLOR, MERGE, checks, checkSummary, linkedIssues, filesTab, checksTab } from "./pr.js";
@@ -129,7 +129,12 @@ export function labelChip(l, t) {
 export class Viewer {
   constructor({ repo, number, on, data, me, pr, folder, machine, repos = {}, tab }, overlay, cx) {
     this.repo = repo; this.number = number; this.on = on; this.me = me; this.overlay = overlay;
-    this.folder = folder ?? null; this.machine = machine ?? on ?? null; this.repos = repos;
+    this.folder = folder ?? null; this.machine = machine;
+    this.repos = { ...(shared("issues.folders") ?? {}), ...repos };
+    if (repo && folder && this.machine !== undefined) {
+      const key = JSON.stringify([folder, this.machine]);
+      if (!Object.hasOwn(this.repos, key)) this.repos[key] = repo;
+    }
     this.history = []; this.cache = {}; this.timelines = {}; this.labels = {}; this.tab = "write";
     this.kinds = {}; this.diffs = {}; this.openFiles = new Set(); this.prTab = "conversation"; this.mergeMethod = "squash";
     if (typeof pr === "boolean") this.kinds[`${repo}#${number}`] = pr;

@@ -7,6 +7,7 @@ const root = path.join(__dirname, '..');
 const read = (file) => fs.readFileSync(path.join(root, file), 'utf8');
 const spaces = [];
 const calls = [];
+let sharedFolders = {};
 const context = {
   spaces: () => spaces,
   panes: () => [],
@@ -14,6 +15,9 @@ const context = {
   openOverlay: (...args) => calls.push(['open', ...args]),
   closeOverlay: (...args) => calls.push(['close', ...args]),
   window: () => ({ platform: 'windows' }),
+  shared: () => sharedFolders,
+  InputState: { new: () => ({ on() {}, value: () => '' }) },
+  TextareaState: { new: () => ({ on() {}, set_auto_grow() {}, value: () => '' }) },
 };
 vm.createContext(context);
 vm.runInContext(read('mods/issues/start.js').replace(/^import .*;\r?\n/gm, '').replaceAll('export ', '') +
@@ -60,10 +64,29 @@ assert.equal(context.spaceFor(item, true, ctx('acme/a', 'linux-host', '/work/a',
 
 reset();
 spaces.push(space('pane-checkout', '/other', 'linux-host', 'dev/feat/12', [{ id: 'terminal' }]));
-context.panes = () => [{ tab: 'terminal', cwd: '/work/a-task' }];
+context.panes = () => [{ tab: 'terminal', terminal: 'pane-terminal', cwd: '/work/a-task', branch: 'dev/feat/12' }];
 assert.equal(context.spaceFor(item, false, ctx('acme/a', 'linux-host', '/work/a', repoMap)), spaces[0],
   'a verified pane checkout can identify a space whose main folder differs');
+reset();
+spaces.push(space('mixed', '/work/a', 'linux-host', 'dev/feat/12', [{ id: 'split' }]));
+context.panes = () => [
+  { tab: 'split', terminal: 'first', cwd: '/work/b', branch: 'dev/feat/12' },
+  { tab: 'split', terminal: 'second', cwd: '/work/a', branch: 'dev/feat/12' },
+];
+const mixedRepos = registry([['/work/a', 'linux-host', 'acme/a'], ['/work/b', 'linux-host', 'acme/b']]);
+assert.equal(context.spaceFor(item, false, ctx('acme/a', 'linux-host', '/work/a', mixedRepos)), undefined,
+  'a second pane and stale space folder cannot override the first terminal that supplies branch');
+assert.equal(context.spaceFor(item, false, ctx('acme/b', 'linux-host', '/work/b', mixedRepos)), spaces[0]);
+context.panes = () => [
+  { tab: 'split', terminal: 'first', cwd: null, branch: null },
+  { tab: 'split', terminal: 'second', cwd: '/work/a', branch: 'dev/feat/12' },
+];
+assert.equal(context.spaceFor(item, false, ctx('acme/a', 'linux-host', '/work/a', mixedRepos)), undefined,
+  'a pane other than the branch terminal cannot supply identity when its cwd is missing');
 context.panes = () => [];
+assert.equal(context.spaceFor(item, false, ctx('acme/a', 'linux-host', '/work/a', registry([
+  ['/work/a', 'linux-host', 'acme/a'],
+])), undefined), spaces[0], 'space.folder is the fallback when there are no live pane cwd values');
 
 reset();
 spaces.push(space('unmapped', '/unknown', 'linux-host', 'dev/feat/12'));
@@ -71,6 +94,8 @@ assert.equal(context.spaceFor(item, false, ctx('acme/a', 'linux-host', '/unknown
   'unknown checkout identity cannot match by branch alone');
 assert.equal(context.spaceFor(item, false, ctx(null, 'linux-host', '/work/a', repoMap)), undefined,
   'missing repository identity cannot match');
+assert.equal(context.spaceFor(item, false, ctx('acme/a', undefined, '/work/a', repoMap)), undefined,
+  'an explicitly undefined machine is unknown, not local');
 
 assert.equal(matchingSpace('acme/a', null, 'c:/work/repo', registry([
   ['C:\\Work\\Repo', null, 'acme/a'],
@@ -118,6 +143,11 @@ async function starts() {
   reset();
   await context.startWorkspace({ ...ctx('acme/a', 'linux-host', '/unknown', {}), item, pr: false, overlay: 'viewer' });
   assert.deepEqual(calls, [], 'invalid identity cannot select, open, or close anything');
+
+  await context.startWorkspace({ ...ctx('acme/a', undefined, 'C:\\work\\repo', registry([
+    ['C:\\work\\repo', null, 'acme/a'],
+  ])), item, pr: false, overlay: 'viewer' });
+  assert.deepEqual(calls, [], 'an undefined machine cannot select the local checkout');
 }
 
 function makeViewer({ repo = 'acme/a', number = 1, machine = null, folder = '/a', repos = registry([
@@ -151,6 +181,28 @@ assert.equal(remote.folder, '/b');
 remote.back({ notify() {} });
 assert.equal(remote.machine, 'host');
 assert.equal(remote.folder, '/a-remote');
+
+reset();
+spaces.push(space('public-props-space', 'C:\\Work\\Repo', null, 'dev/feat/12'));
+context.panes = () => [];
+sharedFolders = registry([['C:\\Other', null, 'acme/other']]);
+const viewerJobs = [];
+const publicViewer = new context.Viewer({ repo: 'acme/a', number: 12, on: null, folder: 'c:/work/repo', machine: null },
+  'viewer', { spawn: (fn) => viewerJobs.push(fn), notify() {} });
+assert.equal(publicViewer.repos[JSON.stringify(['c:/work/repo', null])], 'acme/a',
+  'Viewer seeds a verified tuple from its existing public props contract');
+assert.equal(publicViewer.repos[JSON.stringify(['C:\\Other', null])], 'acme/other',
+  'Viewer merges previously discovered shared checkouts');
+publicViewer.issue = item;
+publicViewer.workspace({ spawn: (fn) => viewerJobs.push(fn), notify() {} });
+await viewerJobs.at(-1)();
+assert.deepEqual(JSON.parse(JSON.stringify(calls)), [
+  ['close', 'viewer'], ['run', 'space.select', { id: 'public-props-space' }],
+], 'Viewer without a repos prop can still open its verified checkout');
+
+const unknownMachineViewer = new context.Viewer({ repo: 'acme/a', number: 12, on: null, folder: 'C:\\Work\\Repo', machine: undefined },
+  'viewer', { spawn() {}, notify() {} });
+assert.equal(unknownMachineViewer.machine, undefined, 'unknown Viewer machine is not coerced to local');
 
 const unknown = makeViewer({ repos: registry([['/a', null, 'acme/a']]) });
 unknown.go('acme/unknown', 2, { notify() {} });

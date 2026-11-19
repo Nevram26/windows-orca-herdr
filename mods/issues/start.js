@@ -10,13 +10,21 @@ const sameFolder = (a, b, machine) => machine == null && window().platform === "
   : a === b;
 
 function repoAt(folder, machine, repos) {
+  if (machine === undefined) return null;
   const matches = Object.entries(repos ?? {}).flatMap(([key, repo]) => {
     try {
       const [cwd, on] = JSON.parse(key);
-      return (on ?? null) === (machine ?? null) && sameFolder(cwd, folder, machine) ? [repo] : [];
+      return on === machine && sameFolder(cwd, folder, machine) ? [repo] : [];
     } catch { return []; }
   });
   return new Set(matches).size === 1 ? matches[0] : null;
+}
+
+function branchFolder(space, paneList) {
+  const tabs = new Set((space.tabs ?? []).map((tab) => tab.id));
+  const first = paneList.find((pane) => tabs.has(pane.tab) && pane.terminal);
+  if (first) return first.branch === space.branch ? first.cwd : null;
+  return paneList.some((pane) => tabs.has(pane.tab) && pane.cwd) ? null : space.folder;
 }
 
 // A usable checkout for a repository, preferring the current machine when known.
@@ -42,9 +50,8 @@ export function spaceFor(item, pr, context) {
   const allSpaces = spaces(), paneList = panes();
   return allSpaces.find((s) => {
     if (!s.branch || (s.machine ?? null) !== (context.machine ?? null)) return false;
-    const tabs = new Set((s.tabs ?? []).map((t) => t.id));
-    const folders = [s.folder, ...paneList.filter((p) => tabs.has(p.tab)).map((p) => p.cwd)].filter(Boolean);
-    if (!folders.some((folder) => repoAt(folder, context.machine, context.repos) === context.repo)) return false;
+    const folder = branchFolder(s, paneList);
+    if (!folder || repoAt(folder, context.machine, context.repos) !== context.repo) return false;
     return pr ? s.branch === item.headRefName : issue.test(s.branch);
   });
 }
