@@ -4895,6 +4895,10 @@ var Excalidraw = class extends View {
     });
     cx.bind_keys([{ keystroke: "escape", action: "excalidraw_end_edit", context: "ExcalidrawTextEditor" }]);
     this.watchGen = 0;
+    this.revision = 0;
+    this.hasUnsavedConflict = false;
+    this.recoveryConflict = false;
+    this.conflictRecovery = null;
     const p2 = props() ?? {};
     this.overlay = p2.overlay ?? null;
     cx.timer.every(200, (cx2) => this.tick(cx2));
@@ -4904,6 +4908,25 @@ var Excalidraw = class extends View {
   }
   // ---- choosing a drawing ------------------------------------------------------------
   openFile(file, cx) {
+    if (this.file === file && this.status === "pick") {
+      this.status = "ready";
+      this.picker = null;
+      this.focus.focus();
+      cx.notify();
+      return;
+    }
+    if (this.file && file !== this.file && this.hasUnsavedConflict) return;
+    if (this.file === file && this.status === "ready") return;
+    if (this.status === "ready" && this.file && file !== this.file && (this.dirty || this.saving)) {
+      cx.spawn(async (cx2) => {
+        if (this.hasUnsavedConflict) return;
+        if (this.editing) this.endEdit(cx2, {});
+        if ((this.dirty || this.saving) && !await this.save(cx2)) return;
+        this.openFile(file, cx2);
+      });
+      return;
+    }
+    if (this.status === "pick") localStorage.setItem("file", file);
     this.file = file;
     this.status = "loading";
     this.picker = null;
@@ -4918,6 +4941,12 @@ var Excalidraw = class extends View {
     this.dirty = false;
     this.saveError = null;
     this.lastText = null;
+    this.revision = 0;
+    this.savedRevision = 0;
+    this.hasUnsavedConflict = false;
+    this.recoveryConflict = false;
+    this.recoveryError = null;
+    this.conflictRecovery = null;
     const gen = ++this.watchGen;
     cx.spawn(async (cx2) => {
       if (await this.load(cx2)) await this.watch(cx2, gen);
@@ -4945,14 +4974,14 @@ var Excalidraw = class extends View {
   switchFile(cx) {
     cx.spawn(async (cx2) => {
       if (this.editing) this.endEdit(cx2, {});
-      if (this.dirty) await this.save(cx2);
+      if (this.hasUnsavedConflict) return;
+      if (this.dirty && !await this.save(cx2)) return;
       this.showPicker(cx2);
     });
   }
   /** Opens a drawing: from the popup in a new tab, or in this pane. */
   choose(path, cx) {
     if (!this.overlay) {
-      localStorage.setItem("file", path);
       this.openFile(path, cx);
       return;
     }
@@ -4989,7 +5018,12 @@ var Excalidraw = class extends View {
   pickerKey(e4, cx) {
     if (e4.key === "escape") {
       if (this.overlay) closeOverlay(this.overlay);
-      else if (this.file) this.openFile(this.file, cx);
+      else if (this.file) {
+        this.status = "ready";
+        this.picker = null;
+        this.focus.focus();
+        cx.notify();
+      }
       return;
     }
     const item = this.picker.key(e4);
@@ -5037,6 +5071,8 @@ var Excalidraw = class extends View {
       this.lastText = text;
     }
     this.scene.replaceAllElements(this.doc.elements);
+    this.status = "ready";
+    await this.restoreRecovery();
     await this.writeImages();
     const els = this.elements();
     if (els.length) {
@@ -5044,7 +5080,6 @@ var Excalidraw = class extends View {
       this.scrollX = 40 - x1;
       this.scrollY = 80 - y1;
     }
-    this.status = "ready";
     this.rebuild(cx);
     return true;
   }
@@ -5053,6 +5088,84 @@ var Excalidraw = class extends View {
     this.error = message;
     cx.notify();
     return false;
+  }
+  recoveryPath(file = this.file) {
+    let a = 2166136261, b = 0x9e3779b9;
+    for (let i = 0; i < file.length; i++) {
+      const code = file.charCodeAt(i);
+      a = Math.imul(a ^ code, 16777619);
+      b = Math.imul(b ^ code, 2246822519);
+    }
+    return `${appHome()}/data/herdr-excalidraw/recovery/${(a >>> 0).toString(16)}-${(b >>> 0).toString(16)}.json`;
+  }
+  recoverySnapshot(document = this.doc) {
+    const elements = this.scene.getElementsIncludingDeleted();
+    return {
+      version: 1,
+      file: this.file,
+      text: serializeDocument({ ...document, elements }),
+      document: { ...document, elements },
+      history: { undoStack: this.history.undoStack, redoStack: this.history.redoStack },
+      selected: [...this.selected]
+    };
+  }
+  async writeRecovery(snapshot) {
+    const path = this.recoveryPath(snapshot.file);
+    await fs2.mkdir(dirname(path), { recursive: true });
+    let previous = null;
+    try {
+      previous = await fs2.readFile(path, "utf8");
+    } catch (e4) {
+      if (e4?.code !== "ENOENT") throw e4;
+    }
+    if (previous != null && JSON.parse(previous).file !== snapshot.file) throw new Error("recovery key belongs to a different drawing");
+    await writeTextFile2(path, JSON.stringify(snapshot), previous);
+  }
+  async clearRecovery(file = this.file) {
+    try {
+      await fs2.unlink(this.recoveryPath(file));
+    } catch (e4) {
+      if (e4?.code !== "ENOENT") throw e4;
+    }
+  }
+  async restoreRecovery() {
+    let text;
+    try {
+      text = await fs2.readFile(this.recoveryPath(), "utf8");
+    } catch (e4) {
+      if (e4?.code === "ENOENT") return false;
+      this.saveError = `can't read recovery for ${basename(this.file)}: ${e4?.message ?? e4}`;
+      notify({ title: "Excalidraw recovery unavailable", body: this.saveError, level: "error" });
+      return false;
+    }
+    try {
+      const recovery = JSON.parse(text);
+      if (recovery.version !== 1 || recovery.file !== this.file) return false;
+      const doc = recovery.document;
+      const history = recovery.history;
+      const validScene = scene => Array.isArray(scene) && scene.every(element => element && typeof element === "object" && typeof element.id === "string");
+      if (typeof recovery.text !== "string" || !doc || typeof doc !== "object" || !validScene(doc.elements) || !doc.appState || typeof doc.appState !== "object" || !doc.files || typeof doc.files !== "object" || !history || !Array.isArray(history.undoStack) || !history.undoStack.every(validScene) || !Array.isArray(history.redoStack) || !history.redoStack.every(validScene) || !Array.isArray(recovery.selected) || !recovery.selected.every(id => typeof id === "string")) throw new Error("invalid recovery data");
+      const alreadySaved = recovery.text === this.lastText;
+      const diskScene = clone(this.scene.getElementsIncludingDeleted());
+      this.doc = recovery.document;
+      this.scene.replaceAllElements(recovery.document.elements);
+      this.history.undoStack = alreadySaved ? history.undoStack : [...history.undoStack, diskScene];
+      this.history.redoStack = history.redoStack;
+      this.selected = new Set(recovery.selected ?? []);
+      this.dirty = !alreadySaved;
+      this.hasUnsavedConflict = !alreadySaved;
+      this.recoveryConflict = !alreadySaved;
+      this.conflictRecovery = alreadySaved ? null : recovery;
+      this.revision = (this.revision ?? 0) + 1;
+      this.saveError = null;
+      if (alreadySaved) await this.clearRecovery();
+      else notify({ title: "Recovered unsaved Excalidraw work", body: `Restored unsaved changes for ${basename(this.file)}. The drawing changed on disk, so automatic saving is paused until you edit.`, level: "warning" });
+      return true;
+    } catch (e4) {
+      this.saveError = `can't restore recovery for ${basename(this.file)}: ${e4?.message ?? e4}`;
+      notify({ title: "Excalidraw recovery unavailable", body: this.saveError, level: "error" });
+      return false;
+    }
   }
   /** Reloads when the file changes on disk (another editor, an agent, git). */
   async watch(cx, gen) {
@@ -5078,14 +5191,28 @@ var Excalidraw = class extends View {
       notify({ title: `${basename(this.file)} changed on disk`, body: `Not loaded: ${e4.message}`, level: "warning" });
       return;
     }
-    if (this.dirty) {
+    const hadUnsaved = this.dirty;
+    const previousDoc = this.doc;
+    if (hadUnsaved) {
       notify({ title: `${basename(this.file)} changed on disk`, body: "Loaded the file's version; undo brings back your unsaved changes.", level: "warning" });
     }
     if (this.editing) this.endEdit(cx, { discard: true });
     this.history.record(this.scene.getElementsIncludingDeleted());
+    const recovery = hadUnsaved ? this.recoverySnapshot(previousDoc) : null;
     this.doc = doc;
     this.lastText = text;
     this.dirty = false;
+    this.revision = (this.revision ?? 0) + 1;
+    if (hadUnsaved) {
+      this.hasUnsavedConflict = true;
+      try {
+        await this.writeRecovery(recovery);
+        this.conflictRecovery = recovery;
+        this.recoveryError = null;
+      } catch (e4) {
+        this.recoveryError = `couldn't preserve the undo version: ${e4?.message ?? e4}`;
+      }
+    }
     this.scene.replaceAllElements(doc.elements);
     const live = this.map();
     this.selected = new Set([...this.selected].filter((id) => live.has(id)));
@@ -5115,38 +5242,126 @@ var Excalidraw = class extends View {
   }
   markDirty() {
     this.dirty = true;
+    this.recoveryConflict = false;
+    this.revision = (this.revision ?? 0) + 1;
     this.saveAt = Date.now() + 400;
   }
   tick(cx) {
     globalThis.__runDueTimers();
     if (this.status !== "ready") return;
     if (this.herdrZoom() !== this.builtZ) this.rebuild(cx);
-    if (this.dirty && !this.saving && Date.now() >= this.saveAt && !this.pointer && !this.editing) {
+    if (this.dirty && !this.recoveryConflict && !this.saving && Date.now() >= this.saveAt && !this.pointer && !this.editing) {
       cx.spawn(async (cx2) => this.save(cx2));
     }
   }
   async save(cx) {
+    if (this.savingPromise) {
+      await this.savingPromise;
+      return !this.dirty && this.savedRevision === this.revision;
+    }
     this.saving = true;
+    const file = this.file;
+    const expected = this.lastText;
+    const revision = this.revision ?? this.saveAt;
     const text = serializeDocument({ ...this.doc, elements: this.scene.getElementsIncludingDeleted() });
-    const seq = this.saveAt;
+    const pending = (async () => {
+      try {
+        await writeTextFile2(file, text, expected);
+        if (this.file === file) {
+          this.lastText = text;
+          this.savedRevision = revision;
+          if (this.revision === revision) {
+            this.dirty = false;
+            this.saveError = null;
+            if (this.hasUnsavedConflict) {
+              try {
+                const recovery = this.recoverySnapshot();
+                await this.writeRecovery(recovery);
+                this.conflictRecovery = recovery;
+                this.hasUnsavedConflict = false;
+                this.recoveryConflict = false;
+                this.recoveryError = null;
+              } catch (e4) {
+                this.dirty = true;
+                this.saveAt = Date.now() + 400;
+                this.saveError = `saved, but couldn't preserve the undo version: ${e4?.message ?? e4}`;
+                return false;
+              }
+            } else {
+              try {
+                await this.clearRecovery(file);
+              } catch (e4) {
+                this.saveError = `saved, but couldn't clear recovery: ${e4?.message ?? e4}`;
+              }
+            }
+          }
+        }
+        return this.file === file && this.revision === revision;
+      } catch (e4) {
+        let disk;
+        try {
+          disk = await readTextFile(file);
+        } catch (readError) {
+          this.saveError = `${e4?.message ?? e4}; couldn't load disk changes: ${readError?.message ?? readError}`;
+          return false;
+        }
+        if (disk != null && disk !== expected && this.file === file) {
+          try {
+            await this.applyExternal(disk, cx);
+          } catch (readError) {
+            this.saveError = `${e4?.message ?? e4}; couldn't load disk changes: ${readError?.message ?? readError}`;
+            return false;
+          }
+        }
+        this.saveError = [String(e4?.message ?? e4), this.recoveryError].filter(Boolean).join("; ");
+        return false;
+      }
+    })();
+    this.savingPromise = pending;
     try {
-      await writeTextFile2(this.file, text, this.lastText);
-      this.lastText = text;
-      if (this.saveAt === seq) this.dirty = false;
-      this.saveError = null;
-    } catch (e4) {
-      const disk = await readTextFile(this.file).catch(() => null);
-      if (disk != null && disk !== this.lastText) await this.applyExternal(disk, cx);
-      else this.saveError = String(e4?.message ?? e4);
+      return await pending;
     } finally {
+      if (this.savingPromise === pending) this.savingPromise = null;
       this.saving = false;
       cx.notify();
     }
   }
   async close(cx) {
-    this.closed = true;
     if (this.editing) this.endEdit(cx, {});
-    if (this.dirty && this.status === "ready") await this.save(cx);
+    this.closed = true;
+    if ((this.dirty || this.hasUnsavedConflict) && this.status === "ready") {
+      const revision = this.revision;
+      const pendingSave = this.savingPromise;
+      let recoveryError;
+      try {
+        await this.writeRecovery(this.dirty ? this.recoverySnapshot() : this.conflictRecovery ?? this.recoverySnapshot());
+      } catch (e4) {
+        recoveryError = String(e4?.message ?? e4);
+      }
+      let saved = false;
+      if (this.recoveryConflict || !this.dirty) {
+        saved = false;
+      } else if (pendingSave) {
+        await pendingSave;
+        saved = !this.dirty && this.savedRevision === revision;
+      } else {
+        saved = await this.save(cx);
+      }
+      if (saved) {
+        try {
+          await this.clearRecovery();
+        } catch (e4) {
+          recoveryError = [recoveryError, String(e4?.message ?? e4)].filter(Boolean).join("; ");
+        }
+      }
+      if (!saved && recoveryError) {
+        this.saveError = `couldn't preserve recovery: ${recoveryError}; save failed: ${this.saveError ?? "unknown error"}`;
+        notify({ title: "Excalidraw recovery failed", body: this.saveError, level: "error" });
+      } else if (recoveryError) {
+        this.saveError = `saved, but couldn't preserve recovery: ${recoveryError}`;
+        notify({ title: "Excalidraw recovery failed", body: this.saveError, level: "error" });
+      }
+    }
   }
   // ---- rendering ---------------------------------------------------------------------
   shapeOptions() {
