@@ -239,7 +239,8 @@ Project settings, Excalidraw (cmd-shift-e), Open in VS Code (cmd-g) and context 
   pressed). Codex's row lists its free limit resets. `Reset now` spends one through `codex app-server`
   only after a second press, and keeps the attempt's key until the outcome is known, so a retry can't
   spend twice.
-- There's no element drag-and-drop in mods (`on_drop` is only for files from outside): a drag is
+- File rows use `drag_paths` for native drops onto terminals (quoted paths, without Enter).
+  Other element reordering (`on_drop` is only for files from outside) uses a drag tracked with
   `on_mouse_down` on a row, then `on_mouse_move` / `on_mouse_up` on whatever is under the pointer,
   so every drop target handles both. Reset the drag state on the list's own `on_mouse_up`, which
   runs after the target's.

@@ -8,6 +8,10 @@ resumed after a restart), a resource meter, a hover card per worktree, in-app Gi
 The right panel has **Files · Changes · Chats · Draw** tabs, and minimizes to an icon rail on the
 right edge (with Add action). The panel toggle stays in the top bar when collapsed:
 
+Drag a file or folder from Files onto an agent terminal to insert its quoted path without
+submitting the prompt. Requires a Herdr build with `drag_paths` support. Remote paths keep
+their source machine; local files dropped onto a remote terminal are copied there by Herdr.
+
 - **Changes**: Git changes and commits (Better Changes), plus **Push** and **Create PR** (a small
   box prefilled from the branch's commits, then `gh pr create`).
 - **Chats**: the space's past Claude Code and Codex conversations, newest first; click one to
