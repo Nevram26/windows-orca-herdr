@@ -19,6 +19,21 @@ This fork runs the layout on **Windows** as well as macOS.
 
 ![Orca](preview.png)
 
+## Files
+
+In the Files panel, use **New**, type a complete filename such as `notes.md` or `main.py` in the
+tree, and press **Enter**. The extension determines its type; **Esc** cancels. The plus control
+beside a folder creates a file there. **Import** copies an existing local file into the workspace.
+Created/imported files open in the main editor tabs. Clicking a file reuses its existing tab. Text
+and Markdown files open editable and auto-save after a 600 ms typing pause. Closing a tab flushes
+pending changes. If saving fails or the disk version changes, the draft is retained and automatic
+retries pause; **Retry** or **Reload disk** appears to resolve it. Markdown has an optional **Preview**.
+Images preview in the tab, while PDFs and media can be opened in the installed app.
+**Replace** copies edited image/PDF bytes back after confirmation. **Delete** and
+the file context menu ask for confirmation before moving the selected item to Trash/Recycle Bin.
+Changes, imports, local app actions and media previews are local-only; remote files remain
+browseable and readable where the host can read them.
+
 See [RECIPE.md](RECIPE.md) for what it does and how it's built, and
 [THIRD_PARTY.md](THIRD_PARTY.md) for credits and licenses. The issues, live ports, usage limits and
 actions mods are also published on their own in

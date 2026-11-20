@@ -10,8 +10,9 @@ import { props } from "herdr";
 import Panel from "./panel.js";
 import Menu from "./menu.js";
 import Viewer from "./viewer.js";
+import FileForm from "./form.js";
 
-const ROLES = { menu: Menu, viewer: Viewer };
+const ROLES = { menu: Menu, viewer: Viewer, form: FileForm };
 
 export default class FilesOpenWith extends View {
   init(p, cx) {
@@ -24,6 +25,6 @@ export default class FilesOpenWith extends View {
   }
 
   async close(cx) {
-    this.part.close?.(cx);
+    return this.part.close?.(cx);
   }
 }

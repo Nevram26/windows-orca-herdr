@@ -2,11 +2,12 @@
 // that opens, reveals, copies or deletes the clicked file or folder, or hands it to
 // this space's agent. See menu.js and items.js.
 import { div, svg, image } from "gpui-kit";
-import { v_flex, h_flex, Editor, EditorState } from "gpui-base";
-import { spaces, panes, agents, focused, exec, readTextFile, watchFolder, theme, settings, window, openOverlay } from "herdr";
+import { v_flex, h_flex, Editor, EditorState, Input, InputState, Textarea, TextareaState } from "gpui-base";
+import { spaces, panes, agents, focused, exec, readTextFile, watchFolder, theme, settings, window, openOverlay, run } from "herdr";
 import { openFile } from "./tabs.js";
 import { syntaxColors, languageFor } from "./syntax.js";
 import { available, menuHeight } from "./items.js";
+import { createFile, importFile, targetPath, validateName } from "./operations.js";
 import ICONS from "./icons.js";
 
 function location() {
@@ -74,7 +75,7 @@ export default class Panel {
   }
 
   current(context) {
-    return this.context === context && key() === context.key;
+    return !this.closed && this.context === context && key() === context.key;
   }
 
   async loadFolder(path, context) {
@@ -89,6 +90,8 @@ export default class Panel {
   refresh(cx) {
     const { cwd, on } = location(), next = key();
     if (next !== this.context?.key) {
+      this.endCreate();
+      this.endForm();
       if (this.context) this.saved.set(this.context.key, { folders: this.folders, file: this.file });
       const saved = this.saved.get(next);
       this.context = { key: next, cwd, on }; this.root = cwd; this.on = on; this.entries = new Map(); this.folders = new Set(saved?.folders);
@@ -174,6 +177,108 @@ export default class Panel {
     openFile({ file: `${this.root}/${path}`, on: this.on, space: location().space }, cx);
   }
 
+  openForm(kind, folder = "", cx) {
+    if (!this.root || this.on) return;
+    if (kind === "create") return this.beginCreate(folder, cx);
+    const { space } = location();
+    run("tab.new", { name: kind === "create" ? "New file" : "Import file", space, mod: "files-open-with",
+      props: { role: "form", kind, folder, root: this.root, on: this.on, space } });
+  }
+
+  beginCreate(folder, cx) {
+    if (!this.root || this.on || this.creating?.busy) return;
+    this.endCreate(); this.notice = null;
+    if (folder && !this.folders.has(folder)) this.toggle(folder, cx);
+    const name = InputState.new({ placeholder: "File name (e.g. notes.md)" });
+    const entry = this.creating = { name, folder, context: this.context, space: location().space, busy: false };
+    name.on("submit", (_event, cx) => this.submitCreate(cx));
+    name.on("change", (_event, cx) => { if (this.creating === entry) { entry.error = null; cx.notify(); } });
+    name.focus(); cx.notify();
+  }
+
+  endCreate() {
+    this.creating?.name.release(); this.creating = null;
+  }
+
+  async submitCreate(cx) {
+    const entry = this.creating;
+    if (!entry || entry.busy) return;
+    const { context, folder } = entry, name = entry.name.value();
+    if (!this.current(context)) { this.endCreate(); return; }
+    const invalid = validateName(name);
+    if (invalid) { entry.error = invalid; cx.notify(); return; }
+    entry.busy = true; entry.error = null; cx.notify();
+    try {
+      const file = targetPath(context.cwd, folder, name, context.on);
+      await createFile(file, "", context.on);
+      if (this.creating === entry && this.current(context)) {
+        this.endCreate();
+        const children = this.entries.get(folder) ?? [];
+        if (!children.some(child => child.name === name)) this.entries.set(folder, [...children, { name, dir: false }].sort((a, b) => Number(b.dir) - Number(a.dir) || a.name.localeCompare(b.name)));
+        openFile({ file, on: context.on, space: entry.space, edit: true }, cx);
+        this.refresh(cx);
+      }
+    } catch (error) { if (this.creating === entry) entry.error = String(error?.message ?? error); }
+    finally { entry.busy = false; if (!this.closed) cx.notify(); }
+  }
+
+  beginForm(kind, folder = "", cx) {
+    if (!this.root || this.form?.busy) return;
+    this.endForm();
+    this.notice = null;
+    this.form = { kind, folder, root: this.context.cwd, on: this.context.on, space: location().space, context: this.context, key: this.context.key, name: InputState.new({ placeholder: "File name" }), source: InputState.new({ placeholder: "Local source file path" }), text: TextareaState.new({ placeholder: "File contents", rows: 6 }), error: null, busy: false };
+    cx.notify();
+  }
+
+  endForm(form = this.form) {
+    if (!form) return;
+    if (this.form === form) this.form = null;
+    form.name?.release(); form.source?.release(); form.text?.release();
+  }
+
+  async submitForm(cx) {
+    const form = this.form;
+    if (!form || form.busy) return;
+    if (this.context !== form.context || !this.current(form.context)) { this.endForm(form); cx.notify(); return; }
+    const { root, on } = form;
+    const folder = form.folder, kind = form.kind;
+    let name = form.name.content().text.trim();
+    const source = form.source.content().text.trim(), text = form.text.content().text;
+    if (kind === "import" && !name) name = source.split(/[\\/]/).pop();
+    const invalid = validateName(name);
+    if (invalid) { form.error = invalid; cx.notify(); return; }
+    if (on) { form.error = "File changes are available only on this computer"; cx.notify(); return; }
+    form.busy = true; form.error = null; cx.notify();
+    try {
+      const destination = targetPath(root, folder, name, on);
+      if (kind === "create") await createFile(destination, text, on);
+      else {
+        if (!source) throw new Error("Enter the local source file path");
+        await importFile(source, destination, on);
+      }
+      if (this.form === form && this.context === form.context && this.current(form.context)) {
+        this.endForm(form); this.notice = `${name} ${kind === "create" ? "created" : "imported"}`;
+        openFile({ file: destination, on, space: form.space, edit: kind === "create" }, cx);
+      }
+      this.refresh(cx);
+    } catch (error) { if (this.form === form) form.error = String(error?.message ?? error); }
+    finally { form.busy = false; if (this.form === form) cx.notify(); }
+  }
+
+  formView(t) {
+    const f = this.form;
+    const field = state => div().h(32).px(8).flex().items_center().rounded(6).border_1().border_color(t.border).child(Input.new(state).flex_1().text_color(t.foreground));
+    const action = (id, label, fn, primary = false) => div().id(id).h(30).px(10).flex().items_center().rounded(6).cursor_pointer().bg(primary ? t.selected : t.hover).text_color(t.foreground).on_click((_e, cx) => fn(cx)).child(label);
+    return v_flex().id("files-form").flex_1().min_h(0).p(12).gap(8)
+      .child(div().font_semibold().child(`${f.kind === "create" ? "New file" : "Import file"} in ${f.folder || "workspace root"}`))
+      .child(field(f.name))
+      .when(f.kind === "import", el => el.child(field(f.source)))
+      .when(f.kind === "create", el => el.child(div().flex_1().min_h(80).rounded(6).border_1().border_color(t.border).p(4).child(Textarea.new(f.text).flex_1().text_color(t.foreground))))
+      .when(Boolean(f.error), el => el.child(div().text_size(12).text_color(t.ansi1).child(f.error)))
+      .when(Boolean(this.notice), el => el.child(div().text_size(12).text_color(t.ansi2).child(this.notice)))
+      .child(h_flex().gap(6).justify_end().child(action("files-form-cancel", "Cancel", cx => { if (!f.busy) this.endForm(f); cx.notify(); })).child(action("files-form-submit", f.busy ? "Working…" : (f.kind === "create" ? "Create" : "Import"), cx => this.submitForm(cx), true)));
+  }
+
   // Right-click: which items apply (installed apps only), then the popup at the pointer.
   menu(path, dir, cx) {
     if (!this.on && window()?.platform === "windows") path = path.replace(/\//g, "\\");
@@ -200,16 +305,30 @@ export default class Panel {
 
   rows(prefix, depth, out, t, dark) {
     if (out.length >= TOTAL || depth > 40) return out;
+    const creating = this.creating;
+    if (creating?.folder === prefix) {
+      out.push(v_flex().id("files-create-name").flex_none().pl(8 + depth * 18).pr(8)
+        .on_key_down((e, cx) => { if (e.key === "escape" && !creating.busy) { cx.stop_propagation(); this.endCreate(); cx.notify(); } })
+        .child(h_flex().h(28).gap(7).items_center().child(div().w(12).flex_none())
+          .child(image(icon(creating.name.value() || "file", false, false, dark)).size(16).flex_none())
+          .child(div().flex_1().min_w(0).h(24).flex().items_center().px(4).border_1().border_color(creating.error ? t.ansi1 : t.ansi4).rounded(3)
+            .child(Input.new(creating.name).flex_1().min_w(0).text_color(t.foreground))))
+        .when(Boolean(creating.error), el => el.child(div().pl(19).py(4).text_size(11).text_color(t.ansi1).child(creating.error))));
+    }
     for (const entry of this.entries.get(prefix) ?? []) {
       if (out.length >= TOTAL) break;
       const path = prefix ? `${prefix}/${entry.name}` : entry.name, open = this.folders.has(path), mark = this.marks[pathKey(`${this.root}/${path}`, this.on)];
       out.push(h_flex().id(`file-${path}`).h(28).flex_none().pl(8 + depth * 18).pr(8).gap(7).items_center().rounded(7).cursor_pointer().hover(s => s.bg(t.hover))
+        .drag_paths([`${this.root}/${path}`], { on: this.on })
         .when(this.isIgnored(path), el => el.opacity(0.5))
         .on_click((_e, cx) => entry.dir ? this.toggle(path, cx) : this.openTab(path, cx))
         .on_mouse_down("right", (_e, cx) => { cx.stop_propagation(); this.menu(`${this.root}/${path}`, entry.dir, cx); })
         .child(entry.dir ? svg(`mods/files-open-with/chevron-${open ? "down" : "right"}.svg`).size(12).flex_none().text_color(t.dim) : div().w(12).flex_none())
         .child(image(icon(path, entry.dir, open, dark)).size(16).flex_none())
         .child(div().flex_1().min_w(0).truncate().child(entry.name))
+        .when(entry.dir && !this.on, el => el.child(div().id(`files-add-${path}`).px(6).text_color(t.muted)
+          .when(Boolean(this.root) && !this.form?.busy, button => button.cursor_pointer().hover(s => s.text_color(t.foreground)).on_click((e, cx) => { cx.stop_propagation(); this.openForm("create", path, cx); }))
+          .when(!this.root || this.form?.busy, button => button.opacity(0.5)).child("＋")))
         .when(Boolean(entry.link), el => el.child(svg("mods/files-open-with/link.svg").size(12).flex_none().text_color(t.dim)))
         .when(Boolean(mark), el => el.child(div().text_size(11).text_color(mark === "A" ? t.ansi2 : mark === "D" || mark === "U" ? t.ansi1 : t.blocked).child(mark))));
       if (entry.dir && open) this.rows(path, depth + 1, out, t, dark);
@@ -224,12 +343,22 @@ export default class Panel {
       .child(h_flex().h(42).flex_none().px(14).gap(8).items_center().border_b(1).border_color(t.border)
         .when(Boolean(this.file), el => el.child(div().id("files-back").w(20).cursor_pointer().text_color(t.muted).on_click((_e, cx) => { this.show(null); cx.notify(); }).child("←")))
         .child(div().font_semibold().child("Files"))
+        .when(!this.on, el => el.child(h_flex().gap(4)
+          .child(div().id("files-new").px(7).py(4).rounded(5).text_size(12)
+            .when(Boolean(this.root) && !this.form?.busy, button => button.cursor_pointer().hover(s => s.bg(t.hover)).on_click((_e, cx) => this.openForm("create", "", cx)))
+            .when(!this.root || this.form?.busy, button => button.opacity(0.5)).child("＋ New"))
+          .child(div().id("files-import").px(7).py(4).rounded(5).text_size(12)
+            .when(Boolean(this.root) && !this.form?.busy, button => button.cursor_pointer().hover(s => s.bg(t.hover)).on_click((_e, cx) => this.openForm("import", "")))
+            .when(!this.root || this.form?.busy, button => button.opacity(0.5)).child("Import"))))
         .child(div().id("files-current").flex_1().min_w(0).truncate().text_right().text_size(12).text_color(t.dim)
           .on_mouse_down("right", (_e, cx) => { cx.stop_propagation(); if (this.root) this.menu(this.file ? `${this.root}/${this.file}` : this.root, !this.file, cx); })
           .child(this.file ?? this.root?.split(/[\\/]/).pop() ?? "")))
-      .when(!this.file, el => el.child(v_flex().id("files-tree").flex_1().min_h(0).overflow_y_scrollbar().p(6).children(this.rows("", 0, [], t, dark))
-        .when(Boolean(this.error) || !this.entries.get("")?.length, el => el.child(div().p(8).text_size(12).text_color(t.dim).child(this.error || (this.loading ? "Loading files…" : this.root ? "No files" : "No folder"))))
-        .when(this.limited, el => el.child(div().p(8).text_size(11).text_color(t.dim).child("File list limited to 500 entries per folder and 5,000 total")))))
+      .when(!this.file, el => el.child(this.form ? this.formView(t) : v_flex().id("files-tree").flex_1().min_h(0).overflow_y_scrollbar().p(6).children(this.rows("", 0, [], t, dark))
+        .when(Boolean(this.error) || (!this.entries.get("")?.length && !this.creating), el => el.child(div().p(8).text_size(12).text_color(t.dim).child(this.error || (this.loading ? "Loading files…" : this.root ? "No files" : "No folder"))))
+        .when(this.limited, el => el.child(div().p(8).text_size(11).text_color(t.dim).child("File list limited to 500 entries per folder and 5,000 total")))
+        .when(Boolean(this.notice) && !this.form, el => el.child(div().p(8).text_size(12).text_color(t.ansi2).child(this.notice)))))
       .when(Boolean(this.file), el => el.child(this.code ? Editor.new(this.code).flex_1().min_h(0) : div().p(12).text_color(t.dim).child(this.fileError || "Loading file…")));
   }
+
+  close() { this.closed = true; this.endCreate(); this.endForm(); this.context = null; }
 }
