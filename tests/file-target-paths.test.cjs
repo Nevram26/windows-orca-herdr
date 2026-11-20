@@ -24,7 +24,7 @@ Object.assign(panel, { root: 'C:\\Work\\Repo', on: null, ignored: new Set(['c:/w
 assert.equal(panel.isIgnored('Foo/child'), true);
 
 const viewer = fs.readFileSync(path.join(root, 'mods/files-open-with/viewer.js'), 'utf8').replace(/^import .*;\r?\n/gm, '').replace('export default class', 'class');
-const v = { window: () => ({ platform: 'windows' }) }; vm.createContext(v);
+const v = { window: () => ({ platform: 'windows' }), shared: () => ({}), setShared() {} }; vm.createContext(v);
 vm.runInContext(`${viewer}\nthis.resolve = resolve; this.Viewer = Viewer;`, v);
 assert.equal(v.resolve('/srv/a\\b/readme.md', 'Foo\\bar.md', 'linux-host'), '/srv/a\\b/Foo\\bar.md');
 assert.equal(v.resolve('/srv/readme.md', 'C:local.md', 'linux-host'), '/srv/C:local.md');

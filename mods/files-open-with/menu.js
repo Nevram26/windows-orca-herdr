@@ -12,6 +12,7 @@ import { ITEMS, argvOf } from "./items.js";
 export default class Menu {
   init(_props, cx) {
     this.at = 0;
+    this.confirm = null;
     this.handle = cx.focus_handle();
     this.handle.focus();
   }
@@ -20,9 +21,11 @@ export default class Menu {
     return (props()?.items ?? []).map(i => ITEMS[i]).filter(Boolean);
   }
 
-  choose(i) {
+  choose(i, cx) {
     const p = props(), it = this.list()[i];
     if (!it) return;
+    if (it.icon === "trash" && this.confirm !== i) { this.confirm = i; cx?.notify(); return; }
+    this.confirm = null;
     closeOverlay(p.overlay);
     const [cmd, ...args] = argvOf(it, p.path);
     // Not awaited by the menu: Quick Look runs until its window is closed.
@@ -36,7 +39,8 @@ export default class Menu {
     );
   }
 
-  label(it) {
+  label(it, i) {
+    if (i === this.confirm) return `Confirm ${it.label}?`;
     return it.agent ? `Add to ${props()?.agent?.name ?? "agent"}` : it.label;
   }
 
@@ -54,7 +58,7 @@ export default class Menu {
         if (!list.length) return;
         if (e.key === "down") this.at = (this.at + 1) % list.length;
         else if (e.key === "up") this.at = (this.at + list.length - 1) % list.length;
-        else if (e.key === "enter") this.choose(this.at);
+        else if (e.key === "enter") this.choose(this.at, cx);
         else if (e.key === "escape") closeOverlay(p.overlay);
         else return;
         cx.notify();
@@ -72,8 +76,8 @@ export default class Menu {
           .text_color(t.foreground)
           .when(i === this.at, el => el.bg(t.selected))
           .hover(s => s.bg(t.hover))
-          .on_click(() => this.choose(i))
+          .on_click((_e, cx) => this.choose(i, cx))
           .child(svg(`mods/files-open-with/menu-${it.icon}.svg`).size(14).flex_none().text_color(t.muted))
-          .child(div().flex_1().truncate().child(this.label(it)))));
+          .child(div().flex_1().truncate().child(this.label(it, i)))));
   }
 }
