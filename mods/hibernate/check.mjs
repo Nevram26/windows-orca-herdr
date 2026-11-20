@@ -250,5 +250,22 @@ await check("native Windows rollout ownership is process-specific and fails clos
   }
 });
 
+await check("quit helper parses, interrupts only busy agents, and waits for Herdr before stopping", async () => {
+  const core = await load();
+  const items = [{ address: "t1", kind: "claude", status: "working", processPid: 11 }, { address: "t2", kind: "codex", status: "idle", processPid: 22 }];
+  const ps = core.quitScript(items, "C:\\it's\\quit-pending.json", "C:\\it's\\quit.json", true).at(-1);
+  assert.match(ps, /^.*Wait-Process -Name herdr-app.*Get-Process -Name herdr-app.*hc interrupt 't1'.*hc keys 't1' '\/' 'e' 'x' 'i' 't' 'enter'.*hc keys 't2' '\/' 'q'/);
+  assert.ok(!ps.includes("hc interrupt 't2'"), "an idle agent gets no ctrl+c");
+  assert.ok(!ps.includes('"'), "no double quotes: they'd need escaping through hc run's argv");
+  const sh = core.quitScript(items, "/a b/quit-pending.json", "/a b/quit.json", false).at(-1);
+  assert.match(sh, /hc interrupt t1 --timeout 5\nhc keys t1 \/ e x i t enter\nhc keys t2 \/ q u i t enter/);
+  if (process.platform === "win32") {
+    const r = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", "$e = $null; [void][Management.Automation.Language.Parser]::ParseInput(($input | Out-String), [ref]$null, [ref]$e); $e.Count"], { input: ps, encoding: "utf8", windowsHide: true });
+    assert.equal(r.stdout.trim(), "0", r.stderr);
+  }
+  const n = spawnSync("sh", ["-n", "-c", sh], { encoding: "utf8" });
+  if (!n.error) assert.equal(n.status, 0, n.stderr);
+});
+
 if (cases.length) throw new Error(`${cases.length} hibernate regression(s) failed: ${cases.join(", ")}`);
 console.log("hibernate check passed");
