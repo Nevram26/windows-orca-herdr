@@ -113,6 +113,12 @@ Project settings, Excalidraw (cmd-shift-e), Open in VS Code (cmd-g) and context 
   change). A reboot or a lost herdr-core brings kept terminals back as shells with a **new** shell
   pid; those are offered in a dialog (a checkbox each, Resume all, Not now, "Resume automatically next
   time"). A program you exited keeps its shell pid, so it's never offered.
+- **When Herdr quits** (`on_quit`, default Sleep): `close()` writes the last snapshot's Claude and
+  Codex agents to `data/hibernate/quit-pending.json` and starts a helper in herdr-core
+  (`hc run --bg --rm`). The helper waits for `herdr-app` to exit (if it's still running, as on a
+  mod reload, it deletes the file and stops nothing), then interrupts the working or blocked ones,
+  sends `/exit` (`/quit` to Codex), force-kills any left after 15 s, and renames the file to
+  `quit.json`. The next launch marks those spaces asleep and wakes them. **Keep running** turns this off.
 - **Settings** (Mod settings → Hibernate, `mod.schema.json`), short labels so the choice buttons
   leave the description room: **Wake sleeping spaces**: Manual (default: the space menu or the
   meter), On open (going to the space), On start (once per Herdr launch). **After a restart**: Ask

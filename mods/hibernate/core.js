@@ -285,3 +285,35 @@ export async function stop(cx, e) {
   }
   return waitIdle(cx, e.address, 3000);
 }
+
+// argv for the helper a quit leaves running in herdr-core. A mod reload calls close() too, so it
+// first waits for Herdr to exit (still running: it drops `pending` and stops nothing). Then it stops
+// each agent like stop() does, force-kills what's left, and renames `pending` to `done` for the next
+// launch to wake. ponytail: PIDs come from the ≤30s-old rolling snapshot; the name check keeps a
+// reused PID from being killed.
+export function quitScript(items, pending, done, win = windows()) {
+  const keys = (e) => [...(e.kind === "claude" ? "/exit" : "/quit"), "enter"];
+  const busy = (e) => e.status === "working" || e.status === "blocked";
+  const pids = items.map((e) => Number(e.processPid)).filter(Boolean);
+  if (win) {
+    const lines = [
+      "$ErrorActionPreference = 'SilentlyContinue'",
+      "Wait-Process -Name herdr-app -Timeout 10",
+      `if (Get-Process -Name herdr-app) { Remove-Item -LiteralPath ${psq(pending)}; exit }`,
+      ...items.flatMap((e) => [...(busy(e) ? [`hc interrupt ${psq(e.address)} --timeout 5`] : []), `hc keys ${psq(e.address)} ${keys(e).map(psq).join(" ")}`]),
+      `$agents = @(Get-Process -Id ${pids.join(",") || 0} | Where-Object { $_.ProcessName -match '^(claude|codex|node)$' })`,
+      "$agents | Wait-Process -Timeout 15",
+      "$agents | Where-Object { -not $_.HasExited } | ForEach-Object { taskkill /PID $_.Id /T /F | Out-Null }",
+      `Move-Item -LiteralPath ${psq(pending)} -Destination ${psq(done)} -Force`,
+    ];
+    return ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", lines.join("; ")];
+  }
+  const lines = [
+    `i=0; while pgrep -x Herdr >/dev/null || pgrep -x herdr-app >/dev/null; do i=$((i+1)); if [ $i -ge 20 ]; then rm -f ${q(pending)}; exit; fi; sleep 0.5; done`,
+    ...items.flatMap((e) => [...(busy(e) ? [`hc interrupt ${q(e.address)} --timeout 5`] : []), `hc keys ${q(e.address)} ${keys(e).map(q).join(" ")}`]),
+    `for i in $(seq 30); do alive=; for p in ${pids.join(" ")}; do kill -0 $p 2>/dev/null && alive=1; done; [ -z "$alive" ] && break; sleep 0.5; done`,
+    `for p in ${pids.join(" ")}; do case "$(ps -p $p -o comm= 2>/dev/null)" in *claude*|*codex*|*node*) kill -KILL -$p 2>/dev/null || kill -KILL $p 2>/dev/null;; esac; done`,
+    `mv -f ${q(pending)} ${q(done)}`,
+  ];
+  return ["sh", "-c", lines.join("\n")];
+}

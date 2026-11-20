@@ -2,18 +2,21 @@
 // or core loss. Docked in a 0px block; as an overlay (props.view) it draws its dialogs.
 
 import { View, div } from "gpui-kit";
-import { spaces, machines, shared, setShared, notify, openOverlay, closeOverlay, appHome, props, focused, nextCommand, exec, readTextFile, writeTextFile, window } from "herdr";
+import { spaces, machines, shared, setShared, notify, openOverlay, closeOverlay, appHome, props, focused, nextCommand, exec, readTextFile, writeTextFile, window, terminals } from "herdr";
 import * as fs from "fs/promises";
-import { get, list, describe, idleShell, program, start, stop, commandLine, machineOf, missingCodexSession } from "./core.js";
+import { get, list, describe, idleShell, program, start, stop, commandLine, machineOf, missingCodexSession, quitScript } from "./core.js";
 import { SleepDialog, ResumeDialog } from "./ui.js";
 import { loadSettings } from "./settings.js";
 
 const DIR = () => `${appHome()}/data/hibernate`;
 const FILE = () => `${DIR()}/state.json`;
+// What a quit stopped: written by close(), renamed by the helper once it has stopped them.
+const PENDING = () => `${DIR()}/quit-pending.json`;
+const QUIT = () => `${DIR()}/quit.json`;
 const LOST_GRACE = 15 * 60 * 1000;
 const local = (address) => !String(address).includes("/");
 // mod.json `settings` (Mod settings, mod.schema.json): when sleeping spaces wake, and what a restart does.
-const DEFAULTS = { wake: "manual", after_restart: "ask" };
+const DEFAULTS = { wake: "manual", after_restart: "ask", on_quit: "sleep" };
 const CODEX_SESSION_HELP = "Codex session ownership could not be verified. Record the current session ID in Codex before exiting manually; use codex resume <session-id> to continue it.";
 const offline = (id) => machines().find((m) => m.name === machineOf(id))?.layout !== "ready";
 const busy = (e) => !e.parent && (e.status === "working" || e.status === "blocked");
@@ -38,6 +41,7 @@ export default class Hibernate extends View {
       const { settings, problems } = await loadSettings("hibernate", DEFAULTS);
       this.settings = settings;
       for (const problem of problems) console.warn(`hibernate mod.json settings: ${problem}`);
+      await this.adoptQuit();
       this.publish();
       await this.noteLaunch();
       await this.pass(cx);
@@ -58,6 +62,40 @@ export default class Hibernate extends View {
 
   async close() {
     if (this.view === "resume") ResumeDialog.close(this);
+    if (!this.view && this.settings.on_quit === "sleep") await this.sleepOnQuit();
+  }
+
+  // "on_quit": "sleep". close() has 250 ms and can't wait for an agent to exit, so the agents of the
+  // last rolling snapshot (busy ones too) go to a helper herdr-core runs after Herdr is gone.
+  async sleepOnQuit() {
+    const live = new Map(terminals().map((t) => [t.address, t]));
+    const names = new Map(spaces().map((s) => [s.id, s.name]));
+    const items = Object.values(this.state.rolling.items ?? {})
+      .filter((e) => (e.kind === "claude" || e.kind === "codex") && live.get(e.address)?.state === "live" && names.has(e.space))
+      .map((e) => ({ ...e, status: live.get(e.address).status ?? null, spaceName: names.get(e.space) }));
+    if (!items.length) return;
+    await fs.mkdir(DIR(), { recursive: true }).catch(() => {});
+    await fs.writeFile(PENDING(), JSON.stringify(items));
+    await exec("hc", ["run", "--bg", "--rm", "--no-parent", "--", ...quitScript(items, PENDING(), QUIT())]);
+  }
+
+  // What the last quit stopped is asleep now, and wakes on this launch.
+  async adoptQuit() {
+    const text = await fs.readFile(QUIT(), "utf8").catch(() => null);
+    if (text === null) return;
+    let items = [];
+    try {
+      items = JSON.parse(text);
+    } catch (e) {
+      console.log(`hibernate: unreadable quit.json (${e})`);
+    }
+    for (const { spaceName, ...e } of items) {
+      const s = (this.state.sleeping[e.space] ??= { at: Date.now(), name: spaceName, items: [] });
+      if (!s.items.some((o) => o.address === e.address)) s.items.push(e);
+      this.toWake.add(e.space);
+    }
+    await this.save();
+    await fs.rm(QUIT()).catch(() => {});
   }
 
   // One job at a time, so a sleep never races a snapshot.
@@ -123,7 +161,7 @@ export default class Hibernate extends View {
     if (!launch || launch === this.state.launch) return;
     this.state.launch = launch;
     await this.save();
-    if (this.settings.wake === "start" && Object.keys(this.state.sleeping).length) this.toWake = new Set(Object.keys(this.state.sleeping));
+    if (this.settings.wake === "start") for (const id of Object.keys(this.state.sleeping)) this.toWake.add(id);
   }
 
   // Changes one setting in mod.json; Herdr then reloads this mod with it.

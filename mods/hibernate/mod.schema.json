@@ -41,6 +41,19 @@
             "start": "On start"
           }
         },
+        "on_quit": {
+          "title": "When Herdr quits",
+          "description": "Sleep stops every agent (working ones too) once Herdr has closed, and wakes them when it opens again. Keep running leaves them in the background.",
+          "enum": [
+            "sleep",
+            "keep"
+          ],
+          "default": "sleep",
+          "x-labels": {
+            "sleep": "Sleep",
+            "keep": "Keep running"
+          }
+        },
         "after_restart": {
           "title": "After a restart",
           "description": "For agents and programs a reboot stopped. Ask lists them to pick from; programs you exited yourself are never offered.",
