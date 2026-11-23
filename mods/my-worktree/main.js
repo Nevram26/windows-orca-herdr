@@ -111,6 +111,15 @@ async function repoOf(folder, on) {
   return { top: top.out, main, name: main.split("/").pop(), linked: main !== top.out };
 }
 
+// Why git keeps `top` locked ("" if no reason was given), or null when it isn't. git refuses to
+// remove a locked worktree, so this is asked before its terminals close.
+async function lockOf(main, top, on) {
+  const r = await git(main, ["worktree", "list", "--porcelain"], on);
+  const entry = r.ok ? r.out.split(/\n\n+/).find((b) => b.split("\n")[0] === `worktree ${top}`) : null;
+  const line = entry?.split("\n").find((l) => l === "locked" || l.startsWith("locked "));
+  return line === undefined ? null : line.slice(7);
+}
+
 export default class Worktree extends View {
   init(_props, cx) {
     this.on = this.space()?.machine;
@@ -234,7 +243,9 @@ export default class Worktree extends View {
       run("space.close", { id: s.id, confirmed: true });
       return "";
     }
-    const status = await git(this.repo.top, ["--no-optional-locks", "-c", "core.fsmonitor=false", "status", "--porcelain"], this.on);
+    const lock = await lockOf(this.repo.main, this.repo.top, this.on);
+    if (lock !== null) return `This worktree is locked${lock ? ` (${lock})` : ""}. Run git worktree unlock first.`;
+    const status =await git(this.repo.top, ["--no-optional-locks", "-c", "core.fsmonitor=false", "status", "--porcelain"], this.on);
     if (!status.ok) return status.err || "git status failed.";
     // git refuses a worktree with submodules unless forced, because their
     // history goes with it. The popup already showed what's at risk; only
