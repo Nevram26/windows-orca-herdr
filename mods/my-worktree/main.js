@@ -245,7 +245,7 @@ export default class Worktree extends View {
     }
     const lock = await lockOf(this.repo.main, this.repo.top, this.on);
     if (lock !== null) return `This worktree is locked${lock ? ` (${lock})` : ""}. Run git worktree unlock first.`;
-    const status =await git(this.repo.top, ["--no-optional-locks", "-c", "core.fsmonitor=false", "status", "--porcelain"], this.on);
+    const status = await git(this.repo.top, ["--no-optional-locks", "-c", "core.fsmonitor=false", "status", "--porcelain"], this.on);
     if (!status.ok) return status.err || "git status failed.";
     // git refuses a worktree with submodules unless forced, because their
     // history goes with it. The popup already showed what's at risk; only
