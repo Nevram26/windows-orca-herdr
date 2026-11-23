@@ -259,6 +259,9 @@ await check("quit helper parses, interrupts only busy agents, and waits for Herd
   assert.ok(!ps.includes('"'), "no double quotes: they'd need escaping through hc run's argv");
   const sh = core.quitScript(items, "/a b/quit-pending.json", "/a b/quit.json", false).at(-1);
   assert.match(sh, /hc interrupt t1 --timeout 5\nhc keys t1 \/ e x i t enter\nhc keys t2 \/ q u i t enter/);
+  // An update restart quits too: a Herdr that comes back within the grace window means stop nothing.
+  assert.match(ps, /Wait-Process -Name herdr-app -Timeout 10; for \(\$i = 0; \$i -lt 30; \$i\+\+\) \{ if \(Get-Process -Name herdr-app\) \{ Remove-Item [^}]*; exit \}; Start-Sleep -Milliseconds 500 \}; hc interrupt/);
+  assert.match(sh, /done\nfor i in \$\(seq 30\); do if pgrep -x Herdr [^\n]*then rm -f '\/a b\/quit-pending\.json'; exit; fi; sleep 0\.5; done\nhc interrupt t1/);
   if (process.platform === "win32") {
     const r = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", "$e = $null; [void][Management.Automation.Language.Parser]::ParseInput(($input | Out-String), [ref]$null, [ref]$e); $e.Count"], { input: ps, encoding: "utf8", windowsHide: true });
     assert.equal(r.stdout.trim(), "0", r.stderr);
