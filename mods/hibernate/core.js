@@ -291,6 +291,11 @@ export async function stop(cx, e) {
 // each agent like stop() does, force-kills what's left, and renames `pending` to `done` for the next
 // launch to wake. ponytail: PIDs come from the ≤30s-old rolling snapshot; the name check keeps a
 // reused PID from being killed.
+// An update restart (app.update) also quits, but promises the terminals keep running, and close()
+// can't tell it from a quit. So after Herdr exits, a Herdr that starts within RELAUNCH_GRACE polls
+// (0.5s each) means a restart: stop nothing. ponytail: a fixed 15s grace; a slower relaunch still
+// sleeps the agents, and a real quit sleeps them 15s later.
+const RELAUNCH_GRACE = 30;
 export function quitScript(items, pending, done, win = windows()) {
   const keys = (e) => [...(e.kind === "claude" ? "/exit" : "/quit"), "enter"];
   const busy = (e) => e.status === "working" || e.status === "blocked";
@@ -299,7 +304,7 @@ export function quitScript(items, pending, done, win = windows()) {
     const lines = [
       "$ErrorActionPreference = 'SilentlyContinue'",
       "Wait-Process -Name herdr-app -Timeout 10",
-      `if (Get-Process -Name herdr-app) { Remove-Item -LiteralPath ${psq(pending)}; exit }`,
+      `for ($i = 0; $i -lt ${RELAUNCH_GRACE}; $i++) { if (Get-Process -Name herdr-app) { Remove-Item -LiteralPath ${psq(pending)}; exit }; Start-Sleep -Milliseconds 500 }`,
       ...items.flatMap((e) => [...(busy(e) ? [`hc interrupt ${psq(e.address)} --timeout 5`] : []), `hc keys ${psq(e.address)} ${keys(e).map(psq).join(" ")}`]),
       `$agents = @(Get-Process -Id ${pids.join(",") || 0} | Where-Object { $_.ProcessName -match '^(claude|codex|node)$' })`,
       "$agents | Wait-Process -Timeout 15",
@@ -310,6 +315,7 @@ export function quitScript(items, pending, done, win = windows()) {
   }
   const lines = [
     `i=0; while pgrep -x Herdr >/dev/null || pgrep -x herdr-app >/dev/null; do i=$((i+1)); if [ $i -ge 20 ]; then rm -f ${q(pending)}; exit; fi; sleep 0.5; done`,
+    `for i in $(seq ${RELAUNCH_GRACE}); do if pgrep -x Herdr >/dev/null || pgrep -x herdr-app >/dev/null; then rm -f ${q(pending)}; exit; fi; sleep 0.5; done`,
     ...items.flatMap((e) => [...(busy(e) ? [`hc interrupt ${q(e.address)} --timeout 5`] : []), `hc keys ${q(e.address)} ${keys(e).map(q).join(" ")}`]),
     `for i in $(seq 30); do alive=; for p in ${pids.join(" ")}; do kill -0 $p 2>/dev/null && alive=1; done; [ -z "$alive" ] && break; sleep 0.5; done`,
     `for p in ${pids.join(" ")}; do case "$(ps -p $p -o comm= 2>/dev/null)" in *claude*|*codex*|*node*) kill -KILL -$p 2>/dev/null || kill -KILL $p 2>/dev/null;; esac; done`,
