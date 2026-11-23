@@ -71,8 +71,12 @@ tested on macOS with Herdr 0.1.13, and on Windows 11 with Herdr 0.1.16 (herdr-co
 
 `./sync.sh` copies the layout and these mods from your Herdr home into the repo (it needs `rsync`
 and `jq`; on Windows, copy the changed mods by hand).
-`previews/render.sh` redraws `preview.png` from `previews/preview.html` with headless Chrome:
-the preview is an HTML mockup with demo data, so no screenshot of your own work is published.
+`preview.png` is a Windows screenshot taken with `herdr-app shot`, with space, repo and branch
+names pixelated. To retake it, open the view you want and run `herdr-app shot preview.png`. Then
+pixelate every space, repo and branch name, and every repo avatar, except this repo's: private and
+work repos must not be readable. Zoom in on the sidebar to check before you commit.
+`previews/render.sh` renders the older macOS mockup from `previews/preview.html`
+with headless Chrome (it writes to `preview.png`, so it replaces the screenshot).
 
 ## License
 
